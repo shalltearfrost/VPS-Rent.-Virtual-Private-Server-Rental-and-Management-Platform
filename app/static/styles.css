@@ -1,0 +1,284 @@
+
+@font-face { font-family: "Public Sans"; src: url("/assets/public-sans-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Public Sans"; src: url("/assets/public-sans-500.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Public Sans"; src: url("/assets/public-sans-600.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+
+  #vps-rent-app {
+    color-scheme: only light;
+    --vr-base: #fff;
+    --vr-ink: #000;
+    --vr-dim: rgba(0, 0, 0, .68);
+    --vr-line: #d8dce2;
+    --vr-card-border-width: 2px;
+    --vr-card-border: #d8dce2;
+    --vr-accent: #1749b6;
+    --vr-accent-hover: #10388e;
+    --vr-amber: #805100;
+    --vr-green: #166534;
+    --vr-red: #b42318;
+    container-type: inline-size;
+    isolation: isolate;
+    background: var(--vr-base);
+    color: var(--vr-ink);
+    font: 15px/1.5 'Public Sans', Arial, sans-serif;
+    text-align: left;
+  }
+  #vps-rent-app * { box-sizing: border-box; }
+  #vps-rent-app h1, #vps-rent-app h2, #vps-rent-app p { margin: 0; }
+  #vps-rent-app h1 { font-size: clamp(26px, 3.6cqw, 32px); font-weight: 600; line-height: 1.2; letter-spacing: -.02em; overflow-wrap: anywhere; }
+  #vps-rent-app h2 { font-size: 15px; font-weight: 600; }
+  #vps-rent-app button, #vps-rent-app input, #vps-rent-app select, #vps-rent-app textarea { font: inherit; }
+  #vps-rent-app button { cursor: inherit; }
+  #vps-rent-app button:focus-visible, #vps-rent-app select:focus-visible,
+  #vps-rent-app input:focus-visible, #vps-rent-app textarea:focus-visible { outline: 2px solid var(--vr-accent); outline-offset: 2px; }
+  #vps-rent-app button:disabled { opacity: .55; }
+  #vps-rent-app .vr-topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 18px; min-height: 56px; padding: 8px clamp(18px, 4.7cqw, 48px); border-bottom: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-brand { display: inline-flex; align-items: center; gap: 11px; color: var(--vr-ink); background: none; border: 0; padding: 0; font-weight: 600; white-space: nowrap; }
+  #vps-rent-app .vr-mark { display: grid; align-content: center; gap: 3px; width: 17px; color: var(--vr-accent); }
+  #vps-rent-app .vr-mark::before, #vps-rent-app .vr-mark::after { content: ''; height: 5px; background: currentColor; }
+  #vps-rent-app .vr-mark::before { width: 12px; }
+  #vps-rent-app .vr-preview, #vps-rent-app .vr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  #vps-rent-app .vr-preview label { color: var(--vr-dim); font-size: 13px; }
+  #vps-rent-app .vr-preview select { background: transparent; min-height: 30px; font-size: 13px; }
+  #vps-rent-app .vr-navigation { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 16px; padding-inline: clamp(18px, 4.7cqw, 48px); border-bottom: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-kicker { color: var(--vr-dim); font-size: 13px; }
+  #vps-rent-app .vr-nav { display: flex; flex-wrap: wrap; gap: 0 clamp(10px, 2.4cqw, 25px); }
+  #vps-rent-app .vr-nav button, #vps-rent-app .vr-account button { display: flex; align-items: center; min-height: 41px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--vr-dim); padding: 6px 0; text-align: left; white-space: nowrap; }
+  #vps-rent-app .vr-nav button:hover, #vps-rent-app .vr-account button:hover { color: var(--vr-ink); }
+  #vps-rent-app .vr-nav button[aria-current="page"] { border-bottom-color: var(--vr-accent); color: var(--vr-accent); font-weight: 600; }
+  #vps-rent-app .vr-main { display: grid; align-content: start; gap: 22px; width: 100%; max-width: 1024px; min-width: 0; margin-inline: auto; padding: clamp(25px, 3.5cqw, 36px) clamp(18px, 4.7cqw, 48px) 35px; }
+  #vps-rent-app .vr-main:has(.vr-orders-list) { max-width: 940px; gap: 10px; padding-block: 12px; }
+  #vps-rent-app .vr-heading { display: grid; gap: 6px; }
+  #vps-rent-app .vr-heading p, #vps-rent-app .vr-subtle { color: var(--vr-dim); }
+  #vps-rent-app .vr-catalogue-title { text-align: center; padding-block: 7px 5px; }
+  #vps-rent-app .vr-catalogue { display: grid; gap: 24px; }
+  #vps-rent-app .vr-plan-table { width: 100%; border-collapse: collapse; table-layout: fixed; text-align: center; font-variant-numeric: tabular-nums; }
+  #vps-rent-app .vr-plan-table col:first-child { width: clamp(69px, 15cqw, 142px); }
+  #vps-rent-app .vr-plan-table th, #vps-rent-app .vr-plan-table td { padding: 10px clamp(6px, 1.5cqw, 15px); border-bottom: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-plan-table tr > :not(:first-child) { border-inline-start: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-plan-table tr > :last-child { border-inline-end: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-plan-table th:first-child { text-align: left; color: var(--vr-dim); font-size: 13px; font-weight: 600; }
+  #vps-rent-app .vr-plan-table thead th { vertical-align: bottom; }
+  #vps-rent-app .vr-plan-table .vr-plan-offer { padding-block: 19px 16px; border-top: 1px solid var(--vr-ink); }
+  #vps-rent-app .vr-plan-offer h2 { font-size: 17px; overflow-wrap: anywhere; }
+  #vps-rent-app .vr-plan-description, #vps-rent-app .vr-plan-period, #vps-rent-app .vr-plan-from { color: var(--vr-dim); font-size: 13px; font-weight: 400; }
+  #vps-rent-app .vr-plan-offer .vr-plan-regular { min-height: 1.5em; margin-top: 12px; font-size: 14px; font-weight: 500; }
+  #vps-rent-app .vr-plan-regular del, #vps-rent-app .vr-term-price del { color: var(--vr-amber); }
+  #vps-rent-app .vr-plan-price .vr-plan-from { display: block; margin-bottom: 2px; letter-spacing: normal; }
+  #vps-rent-app .vr-plan-offer .vr-plan-price { font-size: clamp(26px, 4.5cqw, 42px); font-weight: 600; line-height: 1.07; letter-spacing: -.045em; overflow-wrap: anywhere; }
+  #vps-rent-app .vr-plan-offer .vr-plan-period { margin-top: 4px; }
+  #vps-rent-app .vr-plan-offer .vr-button { width: min(100%, 132px); margin-top: 14px; }
+  #vps-rent-app .vr-catalogue-note { text-align: center; }
+  #vps-rent-app .vr-checkout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 24px; }
+  #vps-rent-app .vr-terms { display: grid; gap: 8px; min-width: 0; margin: 0; border: 0; padding: 0; }
+  #vps-rent-app .vr-terms legend { margin-bottom: 8px; padding: 0; font-weight: 600; }
+  #vps-rent-app .vr-term { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 4px 9px; padding: 10px 12px; border: 1px solid var(--vr-line); border-radius: 2px; }
+  #vps-rent-app .vr-term:has(input:checked) { border-color: var(--vr-accent); box-shadow: inset 0 0 0 1px var(--vr-accent); }
+  #vps-rent-app .vr-term input { min-height: 0; width: 16px; height: 16px; margin: 3px 0 0; padding: 0; accent-color: var(--vr-accent); }
+  #vps-rent-app .vr-term .vr-small { grid-column: 2 / -1; }
+  #vps-rent-app .vr-term-price { display: flex; flex-wrap: wrap; justify-content: end; align-items: baseline; gap: 3px 8px; font-variant-numeric: tabular-nums; }
+  #vps-rent-app .vr-term-price del { font-size: 13px; }
+  #vps-rent-app .vr-checkout-total { padding-top: 12px; border-top: 1px solid var(--vr-line); font-variant-numeric: tabular-nums; }
+  #vps-rent-app .vr-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 185px), 1fr)); gap: 24px; }
+  #vps-rent-app .vr-panel { display: grid; align-content: start; gap: 13px; padding-top: 13px; min-width: 0; border-top: 1px solid var(--vr-ink); overflow-wrap: anywhere; }
+  #vps-rent-app .vr-small { font-size: 13px; color: var(--vr-dim); }
+  #vps-rent-app .vr-specs { margin: 0; padding: 7px 0 0; border-top: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-specs div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; }
+  #vps-rent-app .vr-specs dt { color: var(--vr-dim); }
+  #vps-rent-app .vr-specs dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #vps-rent-app .vr-button { min-height: 36px; border: 1px solid var(--vr-line); border-radius: 2px; background: var(--vr-base); color: var(--vr-ink); padding: 6px 12px; font-weight: 500; }
+  #vps-rent-app .vr-button:hover:not(:disabled) { border-color: var(--vr-ink); }
+  #vps-rent-app .vr-primary { background: var(--vr-accent); color: var(--vr-base); border-color: var(--vr-accent); }
+  #vps-rent-app .vr-primary:hover:not(:disabled) { background: var(--vr-accent-hover); border-color: var(--vr-accent-hover); }
+  #vps-rent-app .vr-badge { display: inline-flex; align-items: baseline; gap: 6px; width: fit-content; max-width: 100%; color: var(--vr-dim); font-size: 13px; }
+  #vps-rent-app .vr-badge::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  #vps-rent-app .vr-good { color: var(--vr-green); }
+  #vps-rent-app .vr-warn::before { background: none; border: 1px solid currentColor; }
+  #vps-rent-app .vr-bad { color: var(--vr-red); }
+  #vps-rent-app .vr-bad::before { border-radius: 0; }
+  #vps-rent-app .vr-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 14px; }
+  #vps-rent-app .vr-list-item { padding-block: 10px; border-top: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-list-item:last-child { padding-bottom: 0; }
+  #vps-rent-app .vr-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; color: var(--vr-dim); font-size: 13px; }
+  #vps-rent-app .vr-steps span[aria-current] { color: var(--vr-ink); font-weight: 600; }
+  #vps-rent-app .vr-note { color: var(--vr-dim); padding-left: 10px; border-left: 2px solid var(--vr-ink); }
+  #vps-rent-app .vr-form { display: grid; gap: 12px; }
+  #vps-rent-app .vr-field { display: grid; gap: 4px; color: var(--vr-dim); }
+  #vps-rent-app input, #vps-rent-app select, #vps-rent-app textarea { min-width: 0; max-width: 100%; min-height: 34px; border: 1px solid var(--vr-line); border-radius: 2px; padding: 6px 8px; color: var(--vr-ink); background: var(--vr-base); }
+  #vps-rent-app textarea { resize: vertical; }
+  #vps-rent-app .vr-command { display: block; width: 100%; overflow-wrap: anywhere; padding: 10px 12px; color: var(--vr-ink); border: 1px solid var(--vr-line); font: 400 13px/1.5 Consolas, monospace; }
+  #vps-rent-app .vr-billing-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(230px, 1fr); align-items: stretch; gap: 8px; }
+  #vps-rent-app .vr-order-card, #vps-rent-app .vr-invoice-card { min-width: 0; }
+  #vps-rent-app .vr-order-card { grid-column: 1; grid-row: 1; }
+  #vps-rent-app .vr-billing-sidebar { display: flex; min-width: 0; grid-column: 2; grid-row: 1; }
+  #vps-rent-app .vr-order-body { display: grid; align-content: start; gap: 8px; height: 100%; padding: 10px; }
+  #vps-rent-app .vr-order-reference { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; font-size: 13px; }
+  #vps-rent-app .vr-order-reference > span:first-child { color: var(--vr-dim); }
+  #vps-rent-app .vr-order-reference .vr-badge { padding: 4px 9px; border-radius: 3px; background: #f7f3ea; color: var(--vr-amber); }
+  #vps-rent-app .vr-order-reference .vr-good { background: #edf7ef; color: var(--vr-green); }
+  #vps-rent-app .vr-order-message { display: grid; gap: 6px; }
+  #vps-rent-app .vr-order-message h2 { font-size: 18px; line-height: 1.3; letter-spacing: -.015em; }
+  #vps-rent-app .vr-order-message p { max-width: 48ch; color: var(--vr-dim); font-size: 13px; line-height: 1.5; }
+  #vps-rent-app .vr-order-progress { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; list-style: none; margin: 0; padding: 0; }
+  #vps-rent-app .vr-order-progress::before { content: ''; position: absolute; top: 12px; left: 12.5%; right: 12.5%; height: 2px; background: var(--vr-line); z-index: 0; }
+  #vps-rent-app .vr-order-progress li { position: relative; z-index: 1; display: grid; justify-items: center; align-content: start; gap: 4px; min-width: 0; padding-inline: 3px; color: #737373; text-align: center; font-size: 12px; }
+  #vps-rent-app .vr-step-marker { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--vr-line); border-radius: 50%; background: var(--vr-base); font-size: 11px; font-variant-numeric: tabular-nums; }
+  #vps-rent-app .vr-step-complete .vr-step-marker { background: var(--vr-green); border-color: var(--vr-green); color: white; }
+  #vps-rent-app .vr-step-marker svg { width: 13px; height: 13px; }
+  #vps-rent-app .vr-order-progress [aria-current] { color: var(--vr-accent); font-weight: 600; }
+  #vps-rent-app .vr-order-progress [aria-current] .vr-step-marker { border-color: var(--vr-accent); box-shadow: 0 0 0 3px #edf2fc; }
+  #vps-rent-app .vr-order-plan { padding-top: 0; }
+  #vps-rent-app .vr-order-plan .vr-row { margin-bottom: 3px; }
+  #vps-rent-app .vr-order-plan h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  #vps-rent-app .vr-order-specs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+  #vps-rent-app .vr-order-specs div { display: grid; gap: 3px; }
+  #vps-rent-app .vr-order-specs dt { font-size: 11px; color: var(--vr-dim); }
+  #vps-rent-app .vr-order-specs dd { margin: 0; font-size: 13px; font-weight: 600; }
+  #vps-rent-app .vr-invoice-card { display: flex; flex: 1; flex-direction: column; gap: 6px; padding: 10px; }
+  #vps-rent-app .vr-invoice-card > .vr-row { padding-bottom: 0; gap: 8px; }
+  #vps-rent-app .vr-invoice-card h2 { font-size: 13px; font-weight: 500; }
+  #vps-rent-app .vr-invoice-status { font-size: 11px; padding: 3px 8px; border: 1px solid var(--vr-line); border-radius: 3px; }
+  #vps-rent-app .vr-invoice-amount { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+  #vps-rent-app .vr-invoice-amount span { font-size: 12px; color: var(--vr-dim); }
+  #vps-rent-app .vr-invoice-amount strong { font-size: 20px; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; font-variant-numeric: tabular-nums; }
+  #vps-rent-app .vr-invoice-details { display: grid; gap: 3px; margin: 0; }
+  #vps-rent-app .vr-invoice-details div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 10px; font-size: 12px; }
+  #vps-rent-app .vr-invoice-details dt { color: var(--vr-dim); }
+  #vps-rent-app .vr-invoice-details dd { margin: 0; text-align: right; }
+  #vps-rent-app .vr-invoice-footnote { margin-top: 12px; font-size: 11px; color: var(--vr-dim); line-height: 1.5; }
+  #vps-rent-app .vr-payment-actions { display: grid; gap: 8px; padding-top: 12px; }
+  #vps-rent-app .vr-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #vps-rent-app .vr-billing-layout button { cursor: pointer; }
+  #vps-rent-app .vr-orders-list { min-width: 0; }
+  #vps-rent-app .vr-order-table-head, #vps-rent-app .vr-order-summary { display: grid; grid-template-columns: 72px minmax(90px, 1fr) 78px 76px minmax(215px, 1.6fr) 16px; align-items: center; gap: 12px; padding: 8px 12px; }
+  #vps-rent-app .vr-order-table-head { padding-block: 0 10px; color: var(--vr-dim); font-size: 11px; }
+  #vps-rent-app .vr-order-table-head > span:nth-child(5) { text-align: right; }
+  #vps-rent-app .vr-order-entry { min-width: 0; border: var(--vr-card-border-width) solid var(--vr-card-border); border-radius: 5px; }
+  #vps-rent-app .vr-order-summary { min-height: 46px; border-radius: 5px; cursor: pointer; list-style: none; font-size: 13px; }
+  #vps-rent-app .vr-order-summary::-webkit-details-marker { display: none; }
+  #vps-rent-app .vr-order-summary::marker { content: ''; }
+  #vps-rent-app .vr-order-summary:hover { background: #fafbfc; }
+  #vps-rent-app .vr-order-summary:focus-visible { outline: 2px solid var(--vr-accent); outline-offset: 3px; }
+  #vps-rent-app .vr-order-summary > span { min-width: 0; }
+  #vps-rent-app .vr-summary-id { font-weight: 600; }
+  #vps-rent-app .vr-summary-term, #vps-rent-app .vr-rental-term { color: var(--vr-ink); font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1.4; letter-spacing: normal; }
+  #vps-rent-app .vr-summary-total { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #vps-rent-app .vr-summary-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+  #vps-rent-app .vr-summary-status .vr-badge { margin-inline-start: auto; justify-content: flex-end; text-align: right; }
+  #vps-rent-app .vr-summary-status .vr-warn { color: var(--vr-amber); }
+  #vps-rent-app .vr-payment-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 3px; background: #edf7ef; color: var(--vr-green); white-space: nowrap; }
+  #vps-rent-app .vr-summary-status .vr-badge,
+  #vps-rent-app .vr-order-reference .vr-badge,
+  #vps-rent-app .vr-payment-pill { font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1.4; letter-spacing: normal; }
+  #vps-rent-app .vr-payment-pill.vr-unpaid { background: #faf4e8; color: var(--vr-amber); }
+  #vps-rent-app .vr-payment-pill.vr-failed { background: #fff0ed; color: var(--vr-red); }
+  #vps-rent-app .vr-order-chevron { width: 16px; height: 16px; color: var(--vr-dim); }
+  #vps-rent-app .vr-order-entry[open] > .vr-order-summary { border-bottom: 1px solid var(--vr-line); border-radius: 5px 5px 0 0; }
+  #vps-rent-app .vr-order-entry[open] > .vr-order-summary .vr-order-chevron { transform: rotate(180deg); }
+  #vps-rent-app .vr-order-expanded { padding: 0 0 4px; }
+  #vps-rent-app .vr-payment-error { color: var(--vr-red); }
+  #vps-rent-app .vr-main:has(.vr-server-list), #vps-rent-app .vr-main:has(.vr-server-panel) { max-width: 940px; gap: 16px; padding-block: 16px; }
+  #vps-rent-app .vr-main:has(.vr-server-panel) { max-width: 720px; gap: 8px; padding-block: 10px; }
+  #vps-rent-app .vr-main:has(.vr-server-panel) h1 { font-size: 26px; }
+  #vps-rent-app .vr-server-list { display: grid; gap: 10px; }
+  #vps-rent-app .vr-server-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; width: 100%; padding: 14px 16px; border: var(--vr-card-border-width) solid var(--vr-card-border); border-radius: 5px; background: var(--vr-base); color: var(--vr-ink); text-align: left; }
+  #vps-rent-app button.vr-server-row { cursor: pointer; }
+  #vps-rent-app button.vr-server-row:hover { background: #fafbfc; }
+  #vps-rent-app .vr-server-name { display: grid; gap: 3px; }
+  #vps-rent-app .vr-server-name strong { font-size: 14px; font-weight: 500; }
+  #vps-rent-app .vr-server-name small { color: var(--vr-dim); font-size: 12px; }
+  #vps-rent-app .vr-server-row-status { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px 20px; margin-inline-start: auto; }
+  #vps-rent-app .vr-server-row-status .vr-badge { font-size: 13px; font-weight: 500; }
+  #vps-rent-app .vr-server-row-status .vr-warn { color: var(--vr-amber); }
+  #vps-rent-app .vr-server-manage { font-size: 12px; color: var(--vr-accent); }
+  #vps-rent-app .vr-server-panel { display: grid; gap: 0; overflow: hidden; border: 1px solid var(--vr-card-border); border-radius: 6px; background: var(--vr-base); }
+  #vps-rent-app .vr-server-panel .vr-badge { font-size: 13px; font-weight: 500; }
+  #vps-rent-app .vr-server-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; padding: 6px 12px; border-bottom: 1px solid var(--vr-line); }
+  #vps-rent-app .vr-server-toolbar .vr-badge { padding: 0; background: transparent; }
+  #vps-rent-app .vr-server-toolbar .vr-actions { gap: 8px; }
+  #vps-rent-app .vr-server-toolbar [data-kind="stop"] { color: var(--vr-red); }
+  #vps-rent-app .vr-server-toolbar [data-kind="start"] { color: var(--vr-green); }
+  #vps-rent-app .vr-server-content { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 10px; padding: 10px 12px; }
+  #vps-rent-app .vr-server-facts { display: grid; grid-template-columns: minmax(170px, 1.4fr) minmax(130px, 1.2fr) repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 0; }
+  #vps-rent-app .vr-server-facts div { display: grid; align-content: start; gap: 2px; min-width: 0; text-align: center; font-size: 13px; }
+  #vps-rent-app .vr-server-facts dt { color: var(--vr-dim); }
+  #vps-rent-app .vr-server-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+  #vps-rent-app .vr-server-facts dd.vr-server-connection { display: flex; align-items: center; justify-content: center; min-height: 36px; margin-top: 8px; }
+  #vps-rent-app .vr-server-facts dd.vr-server-password { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; min-height: 36px; margin-top: 8px; max-width: 100%; font-size: 12px; }
+  #vps-rent-app .vr-server-password label { color: var(--vr-dim); }
+  #vps-rent-app .vr-server-password input { width: 13ch; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--vr-ink); font-family: monospace; font-size: 12px; line-height: 1.5; }
+  #vps-rent-app .vr-server-password input[hidden] { display: none; }
+  #vps-rent-app .vr-server-password .vr-button { min-height: 26px; padding: 2px 7px; font-size: 12px; }
+  #vps-rent-app .vr-server-panel .vr-command { width: auto; min-width: 0; border: 0; border-radius: 0; background: transparent; padding: 0; overflow-wrap: anywhere; white-space: normal; font-size: 12px; }
+  #vps-rent-app .vr-server-request { display: flex; grid-column: 1 / -1; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; font-size: 12px; }
+  #vps-rent-app .vr-server-back { width: fit-content; padding: 0; border: 0; background: transparent; color: var(--vr-dim); font-size: 12px; cursor: pointer; }
+  @container (max-width: 600px) {
+    #vps-rent-app .vr-server-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container (max-width: 760px) {
+    #vps-rent-app .vr-billing-layout { grid-template-columns: minmax(0, 1fr); }
+    #vps-rent-app .vr-order-card, #vps-rent-app .vr-billing-sidebar { grid-column: 1; grid-row: auto; }
+    #vps-rent-app .vr-order-table-head { display: none; }
+    #vps-rent-app .vr-order-summary { grid-template-columns: 66px minmax(0, 1fr) auto 16px; gap: 9px 12px; }
+    #vps-rent-app .vr-summary-term { grid-column: 2; grid-row: 2; }
+    #vps-rent-app .vr-summary-total { grid-column: 3; grid-row: 1; text-align: right; }
+    #vps-rent-app .vr-summary-status { grid-column: 1 / -1; grid-row: 3; }
+    #vps-rent-app .vr-order-chevron { grid-column: 4; grid-row: 1; }
+    #vps-rent-app .vr-order-expanded { padding: 0 0 4px; }
+  }
+  @container (max-width: 400px) {
+    #vps-rent-app .vr-order-body, #vps-rent-app .vr-invoice-card { padding: 10px; }
+    #vps-rent-app .vr-order-progress li { font-size: 11px; }
+    #vps-rent-app .vr-order-specs { gap: 7px; }
+    #vps-rent-app .vr-order-specs dd { font-size: 12px; }
+  }
+  #vps-rent-app .vr-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  @container (max-width: 710px) {
+    #vps-rent-app .vr-plan-description { min-height: 3em; }
+  }
+  @container (max-width: 600px) {
+    #vps-rent-app .vr-checkout { grid-template-columns: minmax(0, 1fr); }
+  }
+  @container (max-width: 540px) {
+    #vps-rent-app .vr-order-progress li { display: grid; justify-items: center; align-content: start; }
+    #vps-rent-app .vr-preview { gap: 4px 8px; }
+    #vps-rent-app .vr-plan-table col:first-child { width: clamp(54px, 13cqw, 70px); }
+    #vps-rent-app .vr-plan-table th, #vps-rent-app .vr-plan-table td { padding-inline: 4px; }
+    #vps-rent-app .vr-plan-offer h2, #vps-rent-app .vr-plan-table td { font-size: 13px; }
+    #vps-rent-app .vr-plan-description { display: none; }
+    #vps-rent-app .vr-plan-offer .vr-plan-price { font-size: clamp(19px, 5.2cqw, 28px); }
+    #vps-rent-app .vr-plan-period, #vps-rent-app .vr-plan-from { font-size: 11px; }
+    #vps-rent-app .vr-plan-offer .vr-button { padding-inline: 4px; font-size: 13px; }
+  }
+  @container (max-width: 360px) {
+    #vps-rent-app .vr-preview label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  }
+  @media (pointer: coarse) {
+    #vps-rent-app button, #vps-rent-app select,
+    #vps-rent-app .vr-preview select, #vps-rent-app .vr-nav button,
+    #vps-rent-app .vr-account button { min-height: 44px; }
+    #vps-rent-app input, #vps-rent-app textarea { font-size: 16px; }
+  }
+
+body { margin: 0; background: #fff; }
+#vps-rent-app [hidden] { display: none; }
+#vps-rent-app .vr-identity { font-size: 12px; color: var(--vr-dim); overflow-wrap: anywhere; }
+#vps-rent-app .vr-feedback { max-width: 928px; margin: 12px auto 0; padding: 8px 16px; color: var(--vr-green); font-size: 13px; }
+#vps-rent-app .vr-feedback-error { color: var(--vr-red); }
+#vps-rent-app .vr-order-body { grid-template-columns: minmax(0, 1.5fr) minmax(200px, 1fr); align-items: start; }
+#vps-rent-app .vr-order-card { display: grid; gap: 14px; padding: 6px; }
+#vps-rent-app .vr-order-card > h2 { font-size: 18px; }
+#vps-rent-app .vr-order-card > .vr-button { justify-self: start; }
+#vps-rent-app .vr-orders-list { display: grid; gap: 8px; }
+#vps-rent-app .vr-main:has([data-form="login"]),
+#vps-rent-app .vr-main:has([data-form="register"]) { max-width: 560px; }
+#vps-rent-app .vr-table-scroll { overflow-x: auto; }
+#vps-rent-app .vr-plan-table { min-width: 430px; }
+#vps-rent-app .vr-message { display: grid; gap: 4px; padding-block: 10px; border-bottom: 1px solid var(--vr-line); }
+#vps-rent-app .vr-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
+#vps-rent-app .vr-renewals { font-size: 12px; color: var(--vr-dim); }
+#vps-rent-app .vr-renewals .vr-actions { margin-top: 10px; }
+@container (max-width: 600px) {
+  #vps-rent-app .vr-order-body { grid-template-columns: minmax(0, 1fr); }
+  #vps-rent-app .vr-identity { max-width: 100%; }
+}
