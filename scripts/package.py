@@ -14,7 +14,6 @@ def main() -> None:
             ".gitignore",
             "pyproject.toml",
             "requirements.lock",
-            "compose.yaml",
             "alembic.ini",
         )
     ]

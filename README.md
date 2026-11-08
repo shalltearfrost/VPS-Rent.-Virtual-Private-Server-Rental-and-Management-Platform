@@ -6,7 +6,7 @@ FastAPI + PostgreSQL rental platform.
 
 ## Run
 
-Requirements: Python 3.12+ and PostgreSQL 17, or Docker Desktop for the database.
+Requirements: Python 3.12+ and PostgreSQL 17.
 The repository's current environment uses Python 3.13 and a local PostgreSQL 17.
 
 From the repository root, on Windows PowerShell:
@@ -21,13 +21,7 @@ This creates an ignored `.env` containing random database, encryption and demo
 credentials. Preserve `CREDENTIAL_KEY` when restarting or moving the database:
 it decrypts the stored server passwords. Never commit `.env`.
 
-Start PostgreSQL with either option:
-
-```powershell
-docker compose up -d --wait
-```
-
-Or, on Windows without Docker, use the project-local PostgreSQL helper. It
+On Windows, start PostgreSQL with the project-local helper. It
 downloads official EnterpriseDB binaries into `.runtime/`, creates its own
 database cluster, and listens only on `127.0.0.1:55432`. It requires no Windows
 service and does not modify an existing PostgreSQL installation:
@@ -45,8 +39,10 @@ Apply the schema, create demo accounts and start the application:
 ```
 
 Open **http://127.0.0.1:8000**. Interactive API documentation is at `/docs`;
-database health is `/api/health`. On Linux/macOS, use `.venv/bin/python` for
-the application commands; Docker works with the same `.env` and port.
+database health is `/api/health`. On Linux/macOS, install PostgreSQL 17 locally,
+create a database and database user, and set `DATABASE_URL` in `.env` to their
+connection details using the `postgresql+psycopg://` scheme. Use
+`.venv/bin/python` for the application commands.
 
 The seed command is idempotent. Accounts:
 
@@ -76,7 +72,7 @@ Stop Uvicorn with Ctrl+C. For the Windows database:
 .venv/Scripts/python.exe scripts/windows_database.py stop
 ```
 
-Docker alternative: `docker compose stop`. Neither stop command deletes data.
+Stopping the database preserves its data.
 
 After the initial setup, Windows can also launch the application in a hidden
 background process using `./scripts/serve.ps1 -Background`. Stop that process

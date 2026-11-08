@@ -31,7 +31,10 @@ def main() -> None:
     parser.add_argument("action", choices=["start", "stop", "status"])
     args = parser.parse_args()
     if os.name != "nt":
-        raise SystemExit("Use Docker Compose on Linux/macOS")
+        raise SystemExit(
+            "This helper supports Windows. On Linux/macOS, install "
+            "PostgreSQL locally and configure DATABASE_URL in .env."
+        )
     load_dotenv(ROOT / ".env")
     if args.action == "stop":
         run("pg_ctl", "-D", str(DATA), "-m", "fast", "-w", "stop")
