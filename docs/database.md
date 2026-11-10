@@ -37,9 +37,10 @@ erDiagram
     USERS ||--o{ PAYMENTS : pays
     ORDERS ||--o| RENTALS : allocates
     SERVERS ||--o{ RENTALS : historical_assignments
-    RENTALS ||--o{ INVOICES : renews
+    RENTALS o|--o{ INVOICES : renews
     RENTALS ||--o{ OPERATION_REQUESTS : receives
-    USERS ||--o{ OPERATION_REQUESTS : requests_or_resolves
+    USERS ||--o{ OPERATION_REQUESTS : requests
+    USERS o|--o{ OPERATION_REQUESTS : resolves
     USERS ||--o{ TICKETS : opens
     RENTALS o|--o{ TICKETS : context
     TICKETS ||--|{ TICKET_MESSAGES : contains
