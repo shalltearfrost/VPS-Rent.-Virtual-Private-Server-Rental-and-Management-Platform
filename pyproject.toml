@@ -13,10 +13,12 @@ dependencies = [
     "email-validator>=2.2,<3",
     "pwdlib[argon2]>=0.2,<1",
     "cryptography>=44,<51",
+    "httpx>=0.28,<1",
+    "python-dotenv>=1,<2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.9,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
 
 [build-system]
 requires = ["setuptools>=75"]

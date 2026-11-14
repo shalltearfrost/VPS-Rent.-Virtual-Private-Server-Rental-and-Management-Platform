@@ -11,12 +11,12 @@ from app.models import (
     OperationRequest,
     Order,
     Payment,
+    PaymentCard,
     Plan,
     Rental,
     Server,
     User,
 )
-from app.schemas import PaymentInput
 from app.security import now
 
 
@@ -108,69 +108,20 @@ def create_order(
     return order
 
 
-def pay_invoice(
-    db: Session, user: User, invoice_id: int, data: PaymentInput
-) -> Payment:
-    invoice = db.get(Invoice, invoice_id)
-    if not invoice:
-        raise HTTPException(404, "Invoice not found")
-    order = owned_order(db, invoice.order_id, user, lock=True)
-    rental = None
-    if invoice.rental_id:
-        rental, _ = owned_rental(db, invoice.rental_id, user, lock=True)
-    invoice = db.scalar(
-        select(Invoice)
-        .where(Invoice.id == invoice_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    previous = db.scalar(
-        select(Payment).where(Payment.idempotency_key == data.idempotency_key)
-    )
-    if previous:
-        if (
-            previous.customer_id != user.id
-            or previous.invoice_id != invoice.id
-            or previous.outcome != data.outcome
-        ):
-            raise HTTPException(409, "Payment key has already been used")
-        return previous
-    if invoice.status == "paid":
-        return db.scalar(
-            select(Payment).where(
-                Payment.invoice_id == invoice.id,
-                Payment.outcome == "succeeded",
-            )
+def initial_card(db: Session, order: Order) -> int | None:
+    """Card saved with the initial payment enables auto-renewal."""
+    return db.scalar(
+        select(PaymentCard.id)
+        .join(Payment, Payment.card_id == PaymentCard.id)
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .where(
+            Invoice.order_id == order.id,
+            Invoice.kind == "initial",
+            Payment.status == "succeeded",
+            Payment.save_card.is_(True),
+            PaymentCard.removed_at.is_(None),
         )
-    if rental:
-        require_active(rental)
-    elif order.status != "awaiting_payment":
-        raise HTTPException(409, "This order cannot accept an initial payment")
-    payment = Payment(
-        invoice_id=invoice.id,
-        customer_id=user.id,
-        idempotency_key=data.idempotency_key,
-        outcome=data.outcome,
     )
-    db.add(payment)
-    if data.outcome == "succeeded":
-        invoice.status = "paid"
-        invoice.paid_at = now()
-        if rental:
-            rental.expires_at += timedelta(days=30)
-            record(
-                db,
-                user,
-                "rental_renewed",
-                "rental",
-                rental.id,
-                "Extended by 30 days",
-            )
-        else:
-            order.status = "awaiting_allocation"
-    record(db, user, "test_payment", "invoice", invoice.id, data.outcome)
-    db.flush()
-    return payment
 
 
 def allocate(
@@ -205,30 +156,11 @@ def allocate(
     )
     server.state = "assigned"
     order.status = "active"
+    rental.auto_renew_card_id = initial_card(db, order)
     db.add(rental)
     db.flush()
     record(db, operator, "allocated", "rental", rental.id, server.name)
     return rental
-
-
-def renewal_invoice(db: Session, user: User, rental_id: int) -> Invoice:
-    rental, order = owned_rental(db, rental_id, user, lock=True)
-    require_active(rental)
-    invoice = db.scalar(
-        select(Invoice).where(
-            Invoice.rental_id == rental.id, Invoice.status == "unpaid"
-        )
-    )
-    if not invoice:
-        invoice = Invoice(
-            order_id=order.id,
-            rental_id=rental.id,
-            kind="renewal",
-            amount_cents=order.renewal_cents,
-        )
-        db.add(invoice)
-        db.flush()
-    return invoice
 
 
 def request_operation(

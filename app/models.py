@@ -168,6 +168,29 @@ class Rental(Record, Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(24), default="active")
     power: Mapped[str] = mapped_column(String(16), default="running")
+    # Saved card charged automatically before expiry; NULL disables it.
+    auto_renew_card_id: Mapped[int | None] = reference("payment_cards")
+
+
+class PaymentCard(Record, Timestamped, Base):
+    __tablename__ = "payment_cards"
+    __table_args__ = (
+        Index(
+            "uq_active_card_token",
+            "token_hash",
+            unique=True,
+            postgresql_where=text("removed_at IS NULL"),
+        ),
+    )
+
+    customer_id: Mapped[int] = reference("users")
+    # Monobank card token: encrypted at rest, hashed for lookups.
+    token_ciphertext: Mapped[str] = mapped_column(Text)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    masked_pan: Mapped[str] = mapped_column(String(32))
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
 
 class Invoice(Record, Timestamped, Base):
@@ -212,20 +235,54 @@ class Payment(Record, Timestamped, Base):
     __tablename__ = "payments"
     __table_args__ = (
         CheckConstraint(
-            "outcome IN ('succeeded', 'failed')", name="payment_outcome"
+            "status IN ('pending', 'succeeded', 'failed', 'refunded')",
+            name="payment_status",
+        ),
+        CheckConstraint(
+            "provider IN ('test', 'monobank')", name="payment_provider"
+        ),
+        CheckConstraint(
+            "initiated_by IN ('customer', 'auto')", name="payment_initiator"
+        ),
+        CheckConstraint(
+            "provider = 'test' OR provider_invoice_id IS NOT NULL "
+            "OR status = 'failed'",
+            name="payment_provider_details",
         ),
         Index(
             "uq_successful_payment",
             "invoice_id",
             unique=True,
-            postgresql_where=text("outcome = 'succeeded'"),
+            postgresql_where=text("status = 'succeeded'"),
         ),
+        Index(
+            "uq_pending_payment",
+            "invoice_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("ix_payments_status", "status", "updated_at"),
     )
 
     invoice_id: Mapped[int] = reference("invoices")
     customer_id: Mapped[int] = reference("users")
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
-    outcome: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    provider: Mapped[str] = mapped_column(String(16), default="monobank")
+    initiated_by: Mapped[str] = mapped_column(String(16), default="customer")
+    provider_invoice_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True
+    )
+    page_url: Mapped[str | None] = mapped_column(Text)
+    save_card: Mapped[bool] = mapped_column(Boolean, default=False)
+    card_id: Mapped[int | None] = reference("payment_cards")
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    provider_modified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class OperationRequest(Record, Timestamped, Base):

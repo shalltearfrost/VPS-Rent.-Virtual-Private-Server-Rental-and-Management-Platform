@@ -276,8 +276,16 @@ body { margin: 0; background: #fff; }
 #vps-rent-app .vr-plan-table { min-width: 430px; }
 #vps-rent-app .vr-message { display: grid; gap: 4px; padding-block: 10px; border-bottom: 1px solid var(--vr-line); }
 #vps-rent-app .vr-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
-#vps-rent-app .vr-renewals { font-size: 12px; color: var(--vr-dim); }
-#vps-rent-app .vr-renewals .vr-actions { margin-top: 10px; }
+#vps-rent-app .vr-pay { display: grid; gap: 8px; }
+#vps-rent-app .vr-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+#vps-rent-app .vr-check input { min-height: 0; width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--vr-accent); }
+#vps-rent-app .vr-renewal { margin-top: 8px; }
+#vps-rent-app .vr-renewal-body { display: grid; gap: 12px; padding: 12px; }
+#vps-rent-app .vr-renewal-body h2 { font-size: 15px; }
+#vps-rent-app .vr-renewal-body h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+#vps-rent-app .vr-auto-renew, #vps-rent-app .vr-cards { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--vr-line); }
+#vps-rent-app .vr-auto-renew select { width: min(100%, 280px); }
+#vps-rent-app .vr-cards .vr-button { min-height: 28px; padding: 2px 8px; font-size: 12px; }
 @container (max-width: 600px) {
   #vps-rent-app .vr-order-body { grid-template-columns: minmax(0, 1fr); }
   #vps-rent-app .vr-identity { max-width: 100%; }

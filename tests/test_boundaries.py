@@ -6,11 +6,12 @@ from sqlalchemy import select
 from app.main import app
 from app.models import Activity, Order, Rental, Server
 from app.security import now
-from tests.conftest import PASSWORD
-from tests.test_workflows import pay
+from tests.conftest import PASSWORD, pay
 
 
-def test_annual_allocation_uses_calendar_year(clients, inventory, db):
+def test_annual_allocation_uses_calendar_year(
+    clients, inventory, db, monobank
+):
     plan, server = inventory
     customer, operator = clients["customer"], clients["operator"]
     order = customer.post(
@@ -21,7 +22,8 @@ def test_annual_allocation_uses_calendar_year(clients, inventory, db):
         },
     ).json()
     assert order["price_cents"] == 1725
-    assert pay(customer, order["invoices"][0]["id"]).status_code == 200
+    paid = pay(customer, monobank, order["invoices"][0]["id"])
+    assert paid.json()["status"] == "paid"
     response = operator.post(
         f"/api/operator/orders/{order['id']}/allocate",
         json={"server_id": server.id},
@@ -48,7 +50,7 @@ def test_mismatched_server_stays_available(clients, paid_order, db):
 
 
 def test_existing_renewal_invoice_cannot_be_paid_after_expiry(
-    clients, active_rental, db
+    clients, active_rental, db, monobank
 ):
     customer = clients["customer"]
     invoice = customer.post(
@@ -59,7 +61,7 @@ def test_existing_renewal_invoice_cannot_be_paid_after_expiry(
     rental.expires_at = now() - timedelta(seconds=1)
     expired_at = rental.expires_at
     db.commit()
-    assert pay(customer, invoice["id"]).status_code == 409
+    assert pay(customer, monobank, invoice["id"]).status_code == 409
     db.expire_all()
     assert db.get(Rental, rental.id).expires_at == expired_at
 

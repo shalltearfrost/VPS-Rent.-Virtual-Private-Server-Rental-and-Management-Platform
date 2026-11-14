@@ -1,7 +1,19 @@
+from datetime import timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Invoice, OperationRequest, Order, Plan, Rental, Server
+from app.billing.presenters import payment_view
+from app.config import get_settings
+from app.models import (
+    Invoice,
+    OperationRequest,
+    Order,
+    Payment,
+    Plan,
+    Rental,
+    Server,
+)
 
 
 def plan_view(plan: Plan) -> dict:
@@ -18,7 +30,7 @@ def plan_view(plan: Plan) -> dict:
     }
 
 
-def invoice_view(invoice: Invoice) -> dict:
+def invoice_view(invoice: Invoice, payment: Payment | None = None) -> dict:
     return {
         "id": invoice.id,
         "number": f"INV-{invoice.id:04d}",
@@ -30,6 +42,7 @@ def invoice_view(invoice: Invoice) -> dict:
         "status": invoice.status,
         "created_at": invoice.created_at,
         "paid_at": invoice.paid_at,
+        "payment": payment_view(payment),
     }
 
 
@@ -70,6 +83,14 @@ def rental_view(db: Session, rental: Rental) -> dict:
         "expires_at": rental.expires_at,
         "status": rental.status,
         "power": rental.power,
+        "auto_renew_card_id": rental.auto_renew_card_id,
+        # First automatic charge attempt; earlier when already in window.
+        "auto_renew_at": (
+            rental.expires_at
+            - timedelta(days=get_settings().auto_renew_days_before)
+            if rental.auto_renew_card_id
+            else None
+        ),
         "operations": [operation_view(item) for item in operations],
     }
 
@@ -80,6 +101,13 @@ def order_view(db: Session, order: Order) -> dict:
         .where(Invoice.order_id == order.id)
         .order_by(Invoice.id)
     ).all()
+    latest = {}
+    for payment in db.scalars(
+        select(Payment)
+        .where(Payment.invoice_id.in_([item.id for item in invoices]))
+        .order_by(Payment.id)
+    ):
+        latest[payment.invoice_id] = payment
     rental = db.scalar(select(Rental).where(Rental.order_id == order.id))
     return {
         "id": order.id,
@@ -92,6 +120,8 @@ def order_view(db: Session, order: Order) -> dict:
         "term": order.term,
         "status": order.status,
         "created_at": order.created_at,
-        "invoices": [invoice_view(item) for item in invoices],
+        "invoices": [
+            invoice_view(item, latest.get(item.id)) for item in invoices
+        ],
         "rental_id": rental.id if rental else None,
     }

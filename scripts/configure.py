@@ -17,7 +17,11 @@ def main() -> None:
         f"POSTGRES_PASSWORD={password}\n"
         f"CREDENTIAL_KEY={key}\n"
         f"DEMO_PASSWORD={secrets.token_urlsafe(18)}\n"
-        "COOKIE_SECURE=false\n",
+        "COOKIE_SECURE=false\n"
+        "# Monobank acquiring token (test token: https://api.monobank.ua/)\n"
+        "MONOBANK_TOKEN=\n"
+        "# Public address of the app; https enables Monobank webhooks\n"
+        "PUBLIC_URL=http://127.0.0.1:8000\n",
         encoding="utf-8",
     )
     print("Created .env with random local credentials.")

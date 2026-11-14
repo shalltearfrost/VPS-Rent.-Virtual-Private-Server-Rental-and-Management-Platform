@@ -10,6 +10,9 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.api import router
+from app.billing.monobank import configured_gateway
+from app.billing.routes import router as billing_router
+from app.billing.service import run_billing_cycle
 from app.config import get_settings
 from app.database import get_engine
 from app.services import flag_expired
@@ -23,12 +26,24 @@ def scan_expired() -> None:
         flag_expired(db)
 
 
+def billing_cycle() -> None:
+    gateway = configured_gateway()
+    if gateway is not None:
+        run_billing_cycle(get_engine(), gateway)
+
+
 async def expiry_worker(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             await asyncio.to_thread(scan_expired)
         except OperationalError:
             logger.warning("Expiry scan postponed: database unavailable")
+        try:
+            await asyncio.to_thread(billing_cycle)
+        except OperationalError:
+            logger.warning("Billing postponed: database unavailable")
+        except Exception:
+            logger.exception("Billing cycle failed")
         try:
             await asyncio.wait_for(
                 stop.wait(), get_settings().expiry_interval_seconds
@@ -50,6 +65,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="VPS Rent", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(billing_router)
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
 

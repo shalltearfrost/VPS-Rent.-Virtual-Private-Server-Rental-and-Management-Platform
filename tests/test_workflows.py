@@ -2,24 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.main import app
-from app.models import Activity, Invoice, Order, Payment, Rental, Server
+from app.models import Activity, Order, Payment, Rental, Server
 from app.security import now
-from tests.conftest import PASSWORD
-
-
-def pay(client, invoice_id, outcome="succeeded", key=None):
-    return client.post(
-        f"/api/invoices/{invoice_id}/test-payment",
-        json={
-            "outcome": outcome,
-            "idempotency_key": key or str(uuid4()),
-        },
-    )
+from tests.conftest import PASSWORD, pay
 
 
 def test_registration_rejects_staff_roles_and_revokes_session(inventory):
@@ -61,7 +50,7 @@ def test_registration_rejects_staff_roles_and_revokes_session(inventory):
         )
 
 
-def test_real_product_flow(clients, inventory, db):
+def test_real_product_flow(clients, inventory, db, monobank):
     customer, operator = clients["customer"], clients["operator"]
     plan, server = inventory
     assert customer.get("/").status_code == 200
@@ -77,7 +66,9 @@ def test_real_product_flow(clients, inventory, db):
     ).json()
     invoice = order["invoices"][0]
     assert order["status"] == "awaiting_payment"
-    assert pay(customer, invoice["id"], "failed").status_code == 200
+    failed = pay(customer, monobank, invoice["id"], "failure")
+    assert failed.json()["payment"]["status"] == "failed"
+    assert failed.json()["payment"]["failure_reason"] == "Card declined"
     assert (
         customer.get(f"/api/orders/{order['id']}").json()["status"]
         == "awaiting_payment"
@@ -89,10 +80,13 @@ def test_real_product_flow(clients, inventory, db):
         ).status_code
         == 409
     )
-    result = pay(customer, invoice["id"], key="successful-payment-key")
-    assert result.status_code == 200
-    duplicate = pay(customer, invoice["id"], key="successful-payment-key")
-    assert duplicate.json()["id"] == result.json()["id"]
+    result = pay(customer, monobank, invoice["id"], key="successful-key-01")
+    assert result.json()["status"] == "paid"
+    duplicate = customer.post(
+        f"/api/invoices/{invoice['id']}/payments",
+        json={"idempotency_key": "successful-key-01"},
+    )
+    assert duplicate.json()["id"] == result.json()["payment"]["id"]
     assert operator.get("/api/operator/queue").json()[0]["id"] == order["id"]
     rental = operator.post(
         f"/api/operator/orders/{order['id']}/allocate",
@@ -156,7 +150,7 @@ def test_operations_change_power_only_after_completion(clients, active_rental):
 
 
 def test_renewal_failed_duplicate_and_concurrent_payments(
-    clients, active_rental, db
+    clients, active_rental, db, monobank
 ):
     customer = clients["customer"]
     rental_id = active_rental["id"]
@@ -166,15 +160,25 @@ def test_renewal_failed_duplicate_and_concurrent_payments(
         customer.post(f"/api/rentals/{rental_id}/renewal-invoice").json()["id"]
         == invoice["id"]
     )
-    assert pay(customer, invoice["id"], "failed").status_code == 200
+    failed = pay(customer, monobank, invoice["id"], "failure")
+    assert failed.json()["status"] == "unpaid"
     db.expire_all()
     assert db.get(Rental, rental_id).expires_at == original
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(
-            executor.map(lambda _: pay(customer, invoice["id"]), range(4))
+    path = f"/api/invoices/{invoice['id']}"
+
+    def start(_):
+        return customer.post(
+            f"{path}/payments", json={"idempotency_key": str(uuid4())}
         )
-    assert [response.status_code for response in results] == [200] * 4
-    assert len({response.json()["id"] for response in results}) == 1
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        started = list(executor.map(start, range(4)))
+    assert [response.status_code for response in started] == [201] * 4
+    assert len({response.json()["id"] for response in started}) == 1
+    monobank.finish()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda _: customer.get(path), range(4)))
+    assert {response.json()["status"] for response in results} == {"paid"}
     db.expire_all()
     assert db.get(Rental, rental_id).expires_at == original + timedelta(
         days=30
@@ -185,7 +189,7 @@ def test_renewal_failed_duplicate_and_concurrent_payments(
             .select_from(Payment)
             .where(
                 Payment.invoice_id == invoice["id"],
-                Payment.outcome == "succeeded",
+                Payment.status == "succeeded",
             )
         )
         == 1
@@ -240,7 +244,9 @@ def test_expiration_suspension_preparation(clients, active_rental, db):
     assert db.get(Rental, rental_id).status == "ended"
 
 
-def test_customer_isolation_and_staff_permissions(clients, active_rental):
+def test_customer_isolation_and_staff_permissions(
+    clients, active_rental, monobank
+):
     other = TestClient(app)
     session = other.post(
         "/api/auth/register",
@@ -270,7 +276,7 @@ def test_customer_isolation_and_staff_permissions(clients, active_rental):
         assert clients[role].get("/api/operator/servers").status_code == 403
     for role in ("operator", "support"):
         assert clients[role].get("/api/management/plans").status_code == 403
-        assert pay(clients[role], invoice_id).status_code == 403
+        assert pay(clients[role], monobank, invoice_id).status_code == 403
     other.close()
 
 
@@ -356,7 +362,7 @@ def test_support_thread_privacy_and_history(clients, active_rental):
     )
 
 
-def test_server_cannot_be_allocated_twice(clients, paid_order, db):
+def test_server_cannot_be_allocated_twice(clients, paid_order, db, monobank):
     customer, operator = clients["customer"], clients["operator"]
     first, server = paid_order
     second = customer.post(
@@ -366,7 +372,7 @@ def test_server_cannot_be_allocated_twice(clients, paid_order, db):
             "term": "monthly",
         },
     ).json()
-    pay(customer, second["invoices"][0]["id"])
+    pay(customer, monobank, second["invoices"][0]["id"])
 
     def assign(order):
         return operator.post(
@@ -381,20 +387,13 @@ def test_server_cannot_be_allocated_twice(clients, paid_order, db):
     assert len(operator.get("/api/operator/queue").json()) == 1
 
 
-@pytest.mark.parametrize("kind", ["initial", "renewal"])
-def test_payment_key_cannot_change_outcome(clients, active_rental, db, kind):
-    if kind == "initial":
-        invoice = db.scalar(select(Invoice).where(Invoice.kind == "initial"))
-        invoice_id = invoice.id
-        key = "initial-payment-key"
-    else:
-        invoice_id = (
-            clients["customer"]
-            .post(f"/api/rentals/{active_rental['id']}/renewal-invoice")
-            .json()["id"]
-        )
-        key = "reused-renewal-key"
-        pay(clients["customer"], invoice_id, "succeeded", key)
-    assert (
-        pay(clients["customer"], invoice_id, "failed", key).status_code == 409
+def test_payment_key_is_bound_to_one_invoice(clients, active_rental):
+    customer = clients["customer"]
+    invoice_id = customer.post(
+        f"/api/rentals/{active_rental['id']}/renewal-invoice"
+    ).json()["id"]
+    response = customer.post(
+        f"/api/invoices/{invoice_id}/payments",
+        json={"idempotency_key": "initial-payment-key"},
     )
+    assert response.status_code == 409
