@@ -253,4 +253,81 @@ CREATE INDEX ix_ticket_messages_ticket_id ON ticket_messages (ticket_id);
 
 INSERT INTO alembic_version (version_num) VALUES ('e266e9761931') RETURNING alembic_version.version_num;
 
+-- Running upgrade e266e9761931 -> 7c1d2a9f4b10
+
+CREATE TABLE payment_cards (
+    customer_id BIGINT NOT NULL,
+    token_ciphertext TEXT NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,
+    masked_pan VARCHAR(32) NOT NULL,
+    removed_at TIMESTAMP WITH TIME ZONE,
+    id BIGSERIAL NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    PRIMARY KEY (id),
+    FOREIGN KEY(customer_id) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_payment_cards_customer_id ON payment_cards (customer_id);
+
+CREATE UNIQUE INDEX uq_active_card_token ON payment_cards (token_hash) WHERE removed_at IS NULL;
+
+ALTER TABLE rentals ADD COLUMN auto_renew_card_id BIGINT;
+
+ALTER TABLE rentals ADD CONSTRAINT rentals_auto_renew_card_id_fkey FOREIGN KEY(auto_renew_card_id) REFERENCES payment_cards (id) ON DELETE RESTRICT;
+
+CREATE INDEX ix_rentals_auto_renew_card_id ON rentals (auto_renew_card_id);
+
+DROP INDEX uq_successful_payment;
+
+ALTER TABLE payments DROP CONSTRAINT payment_outcome;
+
+ALTER TABLE payments RENAME outcome TO status;
+
+ALTER TABLE payments ADD COLUMN provider VARCHAR(16) DEFAULT 'test' NOT NULL;
+
+ALTER TABLE payments ADD COLUMN initiated_by VARCHAR(16) DEFAULT 'customer' NOT NULL;
+
+ALTER TABLE payments ADD COLUMN provider_invoice_id VARCHAR(64);
+
+ALTER TABLE payments ADD COLUMN page_url TEXT;
+
+ALTER TABLE payments ADD COLUMN save_card BOOLEAN DEFAULT false NOT NULL;
+
+ALTER TABLE payments ADD COLUMN card_id BIGINT;
+
+ALTER TABLE payments ADD COLUMN failure_reason TEXT;
+
+ALTER TABLE payments ADD COLUMN provider_modified_at TIMESTAMP WITH TIME ZONE;
+
+ALTER TABLE payments ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL;
+
+ALTER TABLE payments ALTER COLUMN provider DROP DEFAULT;
+
+ALTER TABLE payments ALTER COLUMN initiated_by DROP DEFAULT;
+
+ALTER TABLE payments ALTER COLUMN save_card DROP DEFAULT;
+
+ALTER TABLE payments ADD CONSTRAINT payment_status CHECK (status IN ('pending', 'succeeded', 'failed', 'refunded'));
+
+ALTER TABLE payments ADD CONSTRAINT payment_provider CHECK (provider IN ('test', 'monobank'));
+
+ALTER TABLE payments ADD CONSTRAINT payment_initiator CHECK (initiated_by IN ('customer', 'auto'));
+
+ALTER TABLE payments ADD CONSTRAINT payment_provider_details CHECK (provider = 'test' OR provider_invoice_id IS NOT NULL OR status = 'failed');
+
+ALTER TABLE payments ADD CONSTRAINT payments_provider_invoice_id_key UNIQUE (provider_invoice_id);
+
+ALTER TABLE payments ADD CONSTRAINT payments_card_id_fkey FOREIGN KEY(card_id) REFERENCES payment_cards (id) ON DELETE RESTRICT;
+
+CREATE INDEX ix_payments_card_id ON payments (card_id);
+
+CREATE INDEX ix_payments_status ON payments (status, updated_at);
+
+CREATE UNIQUE INDEX uq_successful_payment ON payments (invoice_id) WHERE status = 'succeeded';
+
+CREATE UNIQUE INDEX uq_pending_payment ON payments (invoice_id) WHERE status = 'pending';
+
+UPDATE alembic_version SET version_num='7c1d2a9f4b10' WHERE alembic_version.version_num = 'e266e9761931';
+
 COMMIT;
+

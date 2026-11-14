@@ -1,4 +1,5 @@
 import os
+from uuid import uuid4
 
 import pytest
 from alembic import command
@@ -8,13 +9,42 @@ from fastapi.testclient import TestClient
 from sqlalchemy import make_url, text
 from sqlalchemy.orm import Session
 
+from app.billing.monobank import optional_gateway
 from app.config import get_settings
 from app.database import Base, get_engine
 from app.main import app
 from app.models import Plan, Server, User
 from app.security import encrypt_password, password_hasher
+from tests.fake_monobank import FakeMonobank
 
 PASSWORD = "Test-password-2026!"
+
+
+def pay(
+    client,
+    monobank,
+    invoice_id,
+    status="success",
+    key=None,
+    save_card=False,
+):
+    """Open a Monobank page, let the fake bank finish it, then sync.
+
+    Returns the start response when it fails, otherwise the invoice view
+    returned after synchronisation.
+    """
+    started = client.post(
+        f"/api/invoices/{invoice_id}/payments",
+        json={
+            "idempotency_key": key or str(uuid4()),
+            "save_card": save_card,
+        },
+    )
+    if started.status_code != 201 or started.json()["status"] != "pending":
+        return started
+    if status != "pending":
+        monobank.finish(status=status)
+    return client.get(f"/api/invoices/{invoice_id}")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -50,6 +80,14 @@ def clean_database(test_database):
     tables = ", ".join(f'"{name}"' for name in Base.metadata.tables)
     with test_database.begin() as connection:
         connection.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(autouse=True)
+def monobank():
+    fake = FakeMonobank()
+    app.dependency_overrides[optional_gateway] = lambda: fake.gateway
+    yield fake
+    app.dependency_overrides.pop(optional_gateway, None)
 
 
 @pytest.fixture
@@ -119,7 +157,7 @@ def inventory(db):
 
 
 @pytest.fixture
-def paid_order(clients, inventory):
+def paid_order(clients, inventory, monobank):
     plan, server = inventory
     customer = clients["customer"]
     response = customer.post(
@@ -131,14 +169,14 @@ def paid_order(clients, inventory):
     )
     assert response.status_code == 201, response.text
     order = response.json()
-    response = customer.post(
-        f"/api/invoices/{order['invoices'][0]['id']}/test-payment",
-        json={
-            "outcome": "succeeded",
-            "idempotency_key": "initial-payment-key",
-        },
+    response = pay(
+        customer,
+        monobank,
+        order["invoices"][0]["id"],
+        key="initial-payment-key",
     )
     assert response.status_code == 200, response.text
+    assert response.json()["status"] == "paid"
     return order, server
 
 

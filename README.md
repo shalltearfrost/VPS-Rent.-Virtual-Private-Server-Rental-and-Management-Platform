@@ -66,6 +66,38 @@ suspension and preparation are recorded manual workflows: this version does not
 call a provider API or perform actual host commands. Confirm actions only after
 performing them at the provider when using real infrastructure.
 
+## Payments (Monobank)
+
+Payments use the Monobank acquiring API. Invoices are in euro and Monobank
+charges them in euro directly (`ccy` 978), without currency conversion.
+
+1. Get a test token at https://api.monobank.ua/ (no real money is charged; any
+   card number that passes the Luhn check works on the payment page).
+2. Put it in `.env` as `MONOBANK_TOKEN=...` and restart the application.
+   Without a token the rest of the app works and payment buttons return 503.
+3. Set `PUBLIC_URL` to the address customers open, e.g.
+   `https://vps.example.org`. Monobank returns customers there after paying.
+   Only an **https** `PUBLIC_URL` enables webhooks
+   (`/api/payments/monobank/webhook`, verified with Monobank's ECDSA key).
+   Locally (`http://127.0.0.1:8000`) the background worker and the payment
+   status page poll Monobank instead, so payments still complete.
+
+Customers can tick "Save card for automatic renewal" when paying. The card
+token is stored encrypted, and the server page lets them choose the card for
+automatic renewal or remove it. Saving cards (`saveCardData`) must be enabled
+for the merchant token by Monobank. Optional settings:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AUTO_RENEW_DAYS_BEFORE` | 3 | Start charging this many days before expiry |
+| `AUTO_RENEW_RETRY_HOURS` | 12 | Wait between failed automatic charges |
+| `PAYMENT_VALIDITY_SECONDS` | 3600 | Lifetime of a Monobank payment page |
+| `MONOBANK_WALLET_PREFIX` | vpsrent | Prefix for per-customer card wallets |
+
+For deployment, also set `COOKIE_SECURE=true` and serve the app over https.
+Every application process runs the expiry/billing worker; row locks with
+`SKIP LOCKED` and unique indexes keep it safe with several workers.
+
 Stop Uvicorn with Ctrl+C. For the Windows database:
 
 ```powershell
