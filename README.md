@@ -68,8 +68,9 @@ performing them at the provider when using real infrastructure.
 
 ## Payments (Monobank)
 
-Payments use the Monobank acquiring API. Invoices are in euro and Monobank
-charges them in euro directly (`ccy` 978), without currency conversion.
+Payments use the Monobank acquiring sandbox. Invoices stay in EUR; before
+checkout the backend saves an exact UAH quote using the public EUR/UAH sell
+rate and sends `ccy=980`. Settlement must match that saved charge.
 The gateway verifies a test merchant and rejects live tokens. See
 [payment reliability](docs/payment-reliability.md) for durable attempts,
 uncertain charge recovery and asynchronous refund confirmation.

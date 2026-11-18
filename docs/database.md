@@ -82,11 +82,12 @@ refunded through Monobank. A paid renewal extends the existing expiry by exactly
 provider_modified_at. The partial unique indexes provide a second line of
 defense against concurrent requests.
 
-A payment always charges its invoice's full amount in the invoice currency
-(euro cents, Monobank `ccy` 978), so the payment row stores no separate amount.
-Automatic renewal charges the rental's saved card from
-AUTO_RENEW_DAYS_BEFORE days before expiry, at most once per
-AUTO_RENEW_RETRY_HOURS per invoice, and never after expiry.
+Customer invoices use EUR. Payments save the exact UAH charge amount and
+currency, quoted before bank dispatch. Confirmation validates the stored
+quote rather than recomputing exchange rates. Automatic renewal begins
+AUTO_RENEW_DAYS_BEFORE days before expiry. Definitive failures can retry after
+AUTO_RENEW_RETRY_HOURS; ambiguous attempts block retries until reconciled.
+No automatic charge is sent after expiry.
 
 Monthly allocation starts 30 days at assignment. The approved annual mockup adds
 12 calendar months, clamping February 29 when needed. Subsequent renewals add
