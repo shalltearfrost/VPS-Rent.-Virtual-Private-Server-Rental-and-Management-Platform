@@ -18,6 +18,19 @@ relevant views when forms are not being edited or a password revealed. The
 application serves its own CSS, JavaScript and Public Sans files under `/assets`;
 there are no build tools or external frontend services required at runtime.
 
+## Lists and pagination
+
+Tickets, history, the allocation queue, the server pool and operation requests
+are paged with keyset cursors (`app/pagination.py`): a response is
+`{"items": [...], "next_cursor": ...}` and the next page continues after the
+last row's `(sort key, id)` instead of skipping rows with `OFFSET`. It stays
+fast deep into a list and never repeats or skips rows while new ones arrive.
+Pages hold 50 rows; the frontend's "Show more" appends the next one, and
+polling reloads every row already shown in one request (up to 200). Filters
+run in the API and each list is built with joins in a constant number of
+queries (`tests/test_pagination.py` counts them). Menu and filter badges come
+from `GET /api/counts`, and the ticket and server pages load their own record.
+
 ## Order request flow
 
 1. `GET /api/plans` reads enabled plans. The frontend renders the three tariff
@@ -59,9 +72,9 @@ unauthenticated access returns 401 and forbidden staff actions return 403.
 | Allocation, operation resolution, suspension/preparation | No | Yes | No | No |
 | Request server operations | Own active rental | No | No | No |
 | Support conversations | Own | No | Yes | No |
-| Ticket statuses | No | No | Yes | No |
+| Ticket statuses | No | No | Yes (a reply to an open ticket moves it to in progress) | No |
 | Create/update/disable plans | No | No | No | Yes |
-| Activity | No | Operational actions | Ticket actions | No |
+| Activity history | No | Orders, payments, rentals, servers, operations | Ticket actions (opened, replies, status) | Plan changes |
 
 User roles come from the database, never a request field or frontend menu.
 Passwords used for sign-in are Argon2 hashes; VPS passwords use authenticated

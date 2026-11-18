@@ -1,10 +1,11 @@
 import secrets
 from datetime import timedelta
 from ipaddress import ip_address
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import delete, select, text
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import delete, func, select, text, true, tuple_
+from sqlalchemy.orm import aliased
 
 from app.config import get_settings
 from app.models import (
@@ -19,9 +20,11 @@ from app.models import (
     TicketMessage,
     User,
 )
+from app.pagination import PageParams, paginate
 from app.presenters import (
     operation_view,
     order_view,
+    order_views,
     plan_view,
     rental_view,
 )
@@ -67,7 +70,15 @@ from app.services import (
 
 router = APIRouter(prefix="/api")
 TicketUser = Annotated[User, Depends(require_role("customer", "support"))]
-StaffHistory = Annotated[User, Depends(require_role("operator", "support"))]
+StaffHistory = Annotated[
+    User, Depends(require_role("operator", "support", "manager"))
+]
+# Activity entity types each staff role may read in its history.
+ACTIVITY_SCOPES = {
+    "support": ("ticket",),
+    "operator": ("order", "invoice", "rental", "server", "operation"),
+    "manager": ("plan",),
+}
 
 
 def user_view(user: User) -> dict:
@@ -193,14 +204,14 @@ def update_plan(plan_id: int, data: PlanInput, user: Manager, db: Db):
 
 @router.get("/orders")
 def orders(user: Customer, db: Db):
-    return [
-        order_view(db, item)
-        for item in db.scalars(
+    return order_views(
+        db,
+        db.scalars(
             select(Order)
             .where(Order.customer_id == user.id)
             .order_by(Order.id.desc())
-        )
-    ]
+        ).all(),
+    )
 
 
 @router.post("/orders", status_code=201)
@@ -249,15 +260,62 @@ def request_action(
 
 
 @router.get("/operator/queue")
-def queue(user: Operator, db: Db):
-    return [
-        order_view(db, item)
-        for item in db.scalars(
-            select(Order)
-            .where(Order.status == "awaiting_allocation")
-            .order_by(Order.created_at)
+def queue(user: Operator, db: Db, page: PageParams):
+    result = paginate(
+        db,
+        select(Order, User.email)
+        .join(User, User.id == Order.customer_id)
+        .where(Order.status == "awaiting_allocation"),
+        [Order.created_at, Order.id],
+        page,
+        descending=False,
+        key=lambda row: (row[0].created_at, row[0].id),
+    )
+    orders = [order for order, _ in result["rows"]]
+    matches = matching_servers(db, orders)
+    items = [
+        {
+            **view,
+            "customer": email,
+            "matching_servers": matches[
+                (order.cpu, order.ram_gb, order.disk_gb)
+            ],
+        }
+        for view, (order, email) in zip(
+            order_views(db, orders), result["rows"], strict=True
         )
     ]
+    return {"items": items, "next_cursor": result["next_cursor"]}
+
+
+# Enough choices for one select; more servers stay in the pool.
+MATCHES_PER_ORDER = 20
+
+
+def matching_servers(db: Db, orders: list[Order]) -> dict:
+    """Available servers per resource spec, with one query for a page."""
+    specs = {(order.cpu, order.ram_gb, order.disk_gb) for order in orders}
+    matches = {spec: [] for spec in specs}
+    if not specs:
+        return matches
+    for server in db.scalars(
+        select(Server)
+        .where(
+            Server.state == "available",
+            tuple_(Server.cpu, Server.ram_gb, Server.disk_gb).in_(specs),
+        )
+        .order_by(Server.name, Server.id)
+    ):
+        found = matches[(server.cpu, server.ram_gb, server.disk_gb)]
+        if len(found) < MATCHES_PER_ORDER:
+            found.append(
+                {
+                    "id": server.id,
+                    "name": server.name,
+                    "address": str(server.address),
+                }
+            )
+    return matches
 
 
 @router.post("/operator/orders/{order_id}/allocate", status_code=201)
@@ -277,20 +335,66 @@ def server_view(server: Server) -> dict:
     }
 
 
+# Pool rows: each server with its held rental (at most one, enforced by
+# uq_rental_held_server) and that rental's customer, in one query.
+POOL_ROWS = (
+    select(Server, Rental.id, Rental.status, Rental.expires_at, User.email)
+    .outerjoin(
+        Rental, (Rental.server_id == Server.id) & (Rental.status != "ended")
+    )
+    .outerjoin(Order, Order.id == Rental.order_id)
+    .outerjoin(User, User.id == Order.customer_id)
+)
+NEEDS_ACTION = ("suspension_pending", "suspended")
+POOL_FILTERS = {
+    "all": None,
+    "action": Rental.status.in_(NEEDS_ACTION),
+    "available": Server.state == "available",
+    "assigned": Rental.status == "active",
+}
+
+
+def pool_item(row) -> dict:
+    server, rental_id, status, expires_at, customer = row
+    return {
+        **server_view(server),
+        "rental_id": rental_id,
+        "rental_status": status,
+        "expires_at": expires_at,
+        "customer": customer,
+    }
+
+
 @router.get("/operator/servers")
-def server_pool(user: Operator, db: Db):
-    result = []
-    for server in db.scalars(select(Server).order_by(Server.id)):
-        item = server_view(server)
-        rental = db.scalar(
-            select(Rental).where(
-                Rental.server_id == server.id, Rental.status != "ended"
-            )
-        )
-        item["rental_id"] = rental.id if rental else None
-        item["rental_status"] = rental.status if rental else None
-        result.append(item)
-    return result
+def server_pool(
+    user: Operator,
+    db: Db,
+    page: PageParams,
+    filter: Literal["all", "action", "available", "assigned"] = "all",
+):
+    query = POOL_ROWS
+    if POOL_FILTERS[filter] is not None:
+        query = query.where(POOL_FILTERS[filter])
+    result = paginate(
+        db,
+        query,
+        [Server.name, Server.id],
+        page,
+        descending=False,
+        key=lambda row: (row[0].name, row[0].id),
+    )
+    return {
+        "items": [pool_item(row) for row in result["rows"]],
+        "next_cursor": result["next_cursor"],
+    }
+
+
+@router.get("/operator/servers/{server_id}")
+def pool_server(server_id: int, user: Operator, db: Db):
+    row = db.execute(POOL_ROWS.where(Server.id == server_id)).first()
+    if not row:
+        raise HTTPException(404, "Server not found")
+    return pool_item(row)
 
 
 @router.post("/operator/servers", status_code=201)
@@ -312,19 +416,52 @@ def add_server(data: ServerInput, user: Operator, db: Db):
 
 
 @router.get("/operator/operations")
-def operations(user: Operator, db: Db):
-    result = []
-    for item in db.scalars(
-        select(OperationRequest).order_by(OperationRequest.created_at.desc())
-    ):
-        rental = db.get(Rental, item.rental_id)
-        result.append(
-            {
-                **operation_view(item),
-                "server_name": db.get(Server, rental.server_id).name,
-            }
+def operations(
+    user: Operator,
+    db: Db,
+    page: PageParams,
+    status: Literal["pending", "resolved"] = "pending",
+):
+    customer, resolver = aliased(User), aliased(User)
+    query = (
+        select(
+            OperationRequest, Rental, Server, customer.email, resolver.email
         )
-    return result
+        .join(Rental, Rental.id == OperationRequest.rental_id)
+        .join(Server, Server.id == Rental.server_id)
+        .join(Order, Order.id == Rental.order_id)
+        .join(customer, customer.id == Order.customer_id)
+        .outerjoin(resolver, resolver.id == OperationRequest.resolved_by)
+    )
+    if status == "pending":
+        # Oldest first: the customer who waited longest is served first.
+        query = query.where(OperationRequest.status == "pending")
+        columns, descending = [OperationRequest.created_at], False
+    else:
+        query = query.where(OperationRequest.status != "pending")
+        columns, descending = [OperationRequest.resolved_at], True
+    columns.append(OperationRequest.id)
+    result = paginate(
+        db,
+        query,
+        columns,
+        page,
+        descending=descending,
+        key=lambda row: [getattr(row[0], column.key) for column in columns],
+    )
+    items = [
+        {
+            **operation_view(item),
+            "server_name": server.name,
+            "address": str(server.address),
+            "customer": email,
+            "power": rental.power,
+            "expires_at": rental.expires_at,
+            "resolved_by": resolved_by,
+        }
+        for item, rental, server, email, resolved_by in result["rows"]
+    ]
+    return {"items": items, "next_cursor": result["next_cursor"]}
 
 
 @router.post("/operator/operations/{operation_id}/resolve")
@@ -399,10 +536,16 @@ def prepare(rental_id: int, data: PreparationInput, user: Operator, db: Db):
     return server_view(server)
 
 
-def accessible_ticket(db: Db, ticket_id: int, user: User) -> Ticket:
+def accessible_ticket(
+    db: Db, ticket_id: int, user: User, *, lock: bool = False
+) -> Ticket:
     query = select(Ticket).where(Ticket.id == ticket_id)
     if user.role == "customer":
         query = query.where(Ticket.customer_id == user.id)
+    if lock:
+        query = query.with_for_update().execution_options(
+            populate_existing=True
+        )
     ticket = db.scalar(query)
     if not ticket:
         raise HTTPException(404, "Ticket not found")
@@ -410,11 +553,12 @@ def accessible_ticket(db: Db, ticket_id: int, user: User) -> Ticket:
 
 
 def ticket_view(db: Db, ticket: Ticket) -> dict:
+    """One ticket with its whole conversation, for the ticket page."""
     messages = db.execute(
         select(TicketMessage, User)
         .join(User, User.id == TicketMessage.author_id)
         .where(TicketMessage.ticket_id == ticket.id)
-        .order_by(TicketMessage.id)
+        .order_by(TicketMessage.created_at, TicketMessage.id)
     )
     context = None
     if ticket.rental_id:
@@ -426,12 +570,16 @@ def ticket_view(db: Db, ticket: Ticket) -> dict:
             "status": rental.status,
             "expires_at": rental.expires_at,
         }
+    customer = db.get(User, ticket.customer_id)
     return {
         "id": ticket.id,
         "subject": ticket.subject,
+        "customer": customer.email,
         "status": ticket.status,
         "rental_id": ticket.rental_id,
         "created_at": ticket.created_at,
+        "last_message_at": ticket.last_message_at,
+        "awaiting_support": ticket.awaiting_support,
         "server": context,
         "messages": [
             {
@@ -444,12 +592,65 @@ def ticket_view(db: Db, ticket: Ticket) -> dict:
     }
 
 
+# List rows show the start of the newest message only.
+EXCERPT_LENGTH = 160
+TicketFilter = Literal["all", "awaiting", "open", "in_progress", "closed"]
+
+
 @router.get("/tickets")
-def tickets(user: TicketUser, db: Db):
-    query = select(Ticket).order_by(Ticket.id.desc())
+def tickets(
+    user: TicketUser, db: Db, page: PageParams, status: TicketFilter = "all"
+):
+    """Ticket summaries, newest conversation first, in one query per page."""
+    customer, author = aliased(User), aliased(User)
+    last = (
+        select(
+            author.role.label("author"),
+            func.left(TicketMessage.body, EXCERPT_LENGTH).label("body"),
+        )
+        .join(author, author.id == TicketMessage.author_id)
+        .where(TicketMessage.ticket_id == Ticket.id)
+        .order_by(TicketMessage.created_at.desc(), TicketMessage.id.desc())
+        .limit(1)
+        .lateral("last_message")
+    )
+    query = (
+        select(Ticket, customer.email, Server.name, last.c.author, last.c.body)
+        .join(customer, customer.id == Ticket.customer_id)
+        .outerjoin(Rental, Rental.id == Ticket.rental_id)
+        .outerjoin(Server, Server.id == Rental.server_id)
+        .outerjoin(last, true())
+    )
     if user.role == "customer":
         query = query.where(Ticket.customer_id == user.id)
-    return [ticket_view(db, ticket) for ticket in db.scalars(query)]
+    if status == "awaiting":
+        query = query.where(Ticket.awaiting_support, Ticket.status != "closed")
+    elif status != "all":
+        query = query.where(Ticket.status == status)
+    result = paginate(
+        db,
+        query,
+        [Ticket.last_message_at, Ticket.id],
+        page,
+        descending=True,
+        key=lambda row: (row[0].last_message_at, row[0].id),
+    )
+    items = [
+        {
+            "id": ticket.id,
+            "subject": ticket.subject,
+            "status": ticket.status,
+            "customer": email,
+            "rental_id": ticket.rental_id,
+            "server_name": server_name,
+            "created_at": ticket.created_at,
+            "last_message_at": ticket.last_message_at,
+            "awaiting_support": ticket.awaiting_support,
+            "last_message": {"author": last_author, "body": excerpt},
+        }
+        for ticket, email, server_name, last_author, excerpt in result["rows"]
+    ]
+    return {"items": items, "next_cursor": result["next_cursor"]}
 
 
 @router.post("/tickets", status_code=201)
@@ -464,7 +665,7 @@ def open_ticket(data: TicketInput, user: Customer, db: Db):
     db.add(
         TicketMessage(ticket_id=ticket.id, author_id=user.id, body=data.body)
     )
-    record(db, user, "ticket_created", "ticket", ticket.id, "Open")
+    record(db, user, "ticket_created", "ticket", ticket.id, ticket.status)
     db.flush()
     return ticket_view(db, ticket)
 
@@ -476,12 +677,26 @@ def ticket_details(ticket_id: int, user: TicketUser, db: Db):
 
 @router.post("/tickets/{ticket_id}/messages", status_code=201)
 def reply(ticket_id: int, data: MessageInput, user: TicketUser, db: Db):
-    ticket = accessible_ticket(db, ticket_id, user)
+    ticket = accessible_ticket(db, ticket_id, user, lock=True)
     if ticket.status == "closed":
         raise HTTPException(409, "This ticket is closed")
     db.add(
         TicketMessage(ticket_id=ticket.id, author_id=user.id, body=data.body)
     )
+    # Same transaction time as the message's created_at.
+    ticket.last_message_at = func.now()
+    ticket.awaiting_support = user.role == "customer"
+    record(
+        db,
+        user,
+        "ticket_reply",
+        "ticket",
+        ticket.id,
+        f"{user.role.capitalize()} replied",
+    )
+    if user.role == "support" and ticket.status == "open":
+        ticket.status = "in_progress"
+        record(db, user, "ticket_status", "ticket", ticket.id, ticket.status)
     db.flush()
     return ticket_view(db, ticket)
 
@@ -490,7 +705,7 @@ def reply(ticket_id: int, data: MessageInput, user: TicketUser, db: Db):
 def change_ticket_status(
     ticket_id: int, data: TicketStatusInput, user: Support, db: Db
 ):
-    ticket = accessible_ticket(db, ticket_id, user)
+    ticket = accessible_ticket(db, ticket_id, user, lock=True)
     if ticket.status != data.status:
         ticket.status = data.status
         record(db, user, "ticket_status", "ticket", ticket.id, data.status)
@@ -498,23 +713,43 @@ def change_ticket_status(
     return ticket_view(db, ticket)
 
 
+# History filters: support narrows by action (optionally `action:result`),
+# other staff by entity type; values outside the role's scope are rejected.
+SUPPORT_ACTIONS = ("ticket_created", "ticket_reply", "ticket_status")
+
+
 @router.get("/activity")
-def activity(user: StaffHistory, db: Db):
+def activity(
+    user: StaffHistory,
+    db: Db,
+    page: PageParams,
+    filter: str = Query("all", max_length=64),
+):
     query = (
         select(Activity, User.email)
         .outerjoin(User, User.id == Activity.actor_id)
-        .order_by(Activity.created_at.desc(), Activity.id.desc())
-        .limit(200)
+        .where(Activity.entity_type.in_(ACTIVITY_SCOPES[user.role]))
     )
-    if user.role == "support":
-        query = query.where(Activity.entity_type == "ticket")
-    else:
-        query = query.where(
-            Activity.entity_type.in_(
-                ["order", "rental", "server", "operation"]
-            )
-        )
-    return [
+    if filter != "all":
+        value, _, result = filter.partition(":")
+        if user.role == "support":
+            column, allowed = Activity.action, SUPPORT_ACTIONS
+        else:
+            column, allowed = Activity.entity_type, ACTIVITY_SCOPES[user.role]
+        if value not in allowed:
+            raise HTTPException(422, "Unknown history filter")
+        query = query.where(column == value)
+        if result:
+            query = query.where(Activity.result == result)
+    page_rows = paginate(
+        db,
+        query,
+        [Activity.created_at, Activity.id],
+        page,
+        descending=True,
+        key=lambda row: (row[0].created_at, row[0].id),
+    )
+    items = [
         {
             "id": item.id,
             "actor": email or "System",
@@ -524,5 +759,64 @@ def activity(user: StaffHistory, db: Db):
             "result": item.result,
             "created_at": item.created_at,
         }
-        for item, email in db.execute(query)
+        for item, email in page_rows["rows"]
     ]
+    return {"items": items, "next_cursor": page_rows["next_cursor"]}
+
+
+@router.get("/counts")
+def counts(user: CurrentUser, db: Db):
+    """Work waiting for staff, for menu and filter badges."""
+    if user.role == "support":
+        by_status = dict(
+            db.execute(
+                select(Ticket.status, func.count()).group_by(Ticket.status)
+            ).all()
+        )
+        awaiting = db.scalar(
+            select(func.count())
+            .select_from(Ticket)
+            .where(Ticket.awaiting_support, Ticket.status != "closed")
+        )
+        statuses = ("open", "in_progress", "closed")
+        return {
+            "tickets": {
+                "all": sum(by_status.values()),
+                "awaiting": awaiting,
+                **{status: by_status.get(status, 0) for status in statuses},
+            }
+        }
+    if user.role == "operator":
+        held = dict(
+            db.execute(
+                select(Rental.status, func.count())
+                .where(Rental.status != "ended")
+                .group_by(Rental.status)
+            ).all()
+        )
+        servers = dict(
+            db.execute(
+                select(Server.state, func.count()).group_by(Server.state)
+            ).all()
+        )
+        return {
+            "queue": db.scalar(
+                select(func.count())
+                .select_from(Order)
+                .where(Order.status == "awaiting_allocation")
+            ),
+            "pool": {
+                "all": sum(servers.values()),
+                "action": sum(held.get(status, 0) for status in NEEDS_ACTION),
+                "available": servers.get("available", 0),
+                "assigned": held.get("active", 0),
+            },
+            "operations": {
+                "pending": db.scalar(
+                    select(func.count())
+                    .select_from(OperationRequest)
+                    .where(OperationRequest.status == "pending")
+                )
+            },
+        }
+    return {}

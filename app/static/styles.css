@@ -45,7 +45,7 @@
   #vps-rent-app .vr-nav { display: flex; flex-wrap: wrap; gap: 0 clamp(10px, 2.4cqw, 25px); }
   #vps-rent-app .vr-nav button, #vps-rent-app .vr-account button { display: flex; align-items: center; min-height: 41px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--vr-dim); padding: 6px 0; text-align: left; white-space: nowrap; }
   #vps-rent-app .vr-nav button:hover, #vps-rent-app .vr-account button:hover { color: var(--vr-ink); }
-  #vps-rent-app .vr-nav button[aria-current="page"] { border-bottom-color: var(--vr-accent); color: var(--vr-accent); font-weight: 600; }
+  #vps-rent-app .vr-nav button[aria-current] { border-bottom-color: var(--vr-accent); color: var(--vr-accent); font-weight: 600; }
   #vps-rent-app .vr-main { display: grid; align-content: start; gap: 22px; width: 100%; max-width: 1024px; min-width: 0; margin-inline: auto; padding: clamp(25px, 3.5cqw, 36px) clamp(18px, 4.7cqw, 48px) 35px; }
   #vps-rent-app .vr-main:has(.vr-orders-list) { max-width: 940px; gap: 10px; padding-block: 12px; }
   #vps-rent-app .vr-heading { display: grid; gap: 6px; }
@@ -290,3 +290,60 @@ body { margin: 0; background: #fff; }
   #vps-rent-app .vr-order-body { grid-template-columns: minmax(0, 1fr); }
   #vps-rent-app .vr-identity { max-width: 100%; }
 }
+
+/* Support tickets and activity history */
+/* New tone for in-progress work; open tickets reuse the existing warn tone. */
+#vps-rent-app .vr-info { color: var(--vr-accent); }
+#vps-rent-app .vr-server-panel .vr-warn { color: var(--vr-amber); }
+
+/* In-page filter: the workspace .vr-nav, made compact. */
+#vps-rent-app .vr-filter { border-bottom: 1px solid var(--vr-line); }
+#vps-rent-app .vr-filter button { min-height: 34px; font-size: 13px; }
+#vps-rent-app .vr-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-inline-start: 6px; padding: 0 5px; border-radius: 9px; background: #eef1f5; color: var(--vr-dim); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#vps-rent-app [aria-current] > .vr-count { background: #edf2fc; color: var(--vr-accent); }
+
+/* Ticket list rows reuse .vr-server-row; only the one-line excerpt is new. */
+#vps-rent-app .vr-server-list, #vps-rent-app .vr-server-row, #vps-rent-app .vr-log, #vps-rent-app .vr-log > * { min-width: 0; }
+#vps-rent-app .vr-server-row .vr-server-name { flex: 1 1 320px; min-width: 0; }
+#vps-rent-app .vr-excerpt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Pressed state for segmented controls (ticket status), mirrors .vr-term:has(:checked). */
+#vps-rent-app .vr-button[aria-pressed="true"] { border-color: var(--vr-accent); color: var(--vr-accent); box-shadow: inset 0 0 0 1px var(--vr-accent); font-weight: 600; }
+
+/* Conversation: existing .vr-message inside a .vr-server-panel card. */
+#vps-rent-app .vr-thread .vr-message { gap: 6px; padding: 12px; }
+#vps-rent-app .vr-thread .vr-message strong { color: var(--vr-ink); font-weight: 600; }
+#vps-rent-app .vr-message-staff { background: #f6f8fd; box-shadow: inset 2px 0 var(--vr-accent); }
+#vps-rent-app .vr-thread textarea { min-height: 96px; }
+
+/* Link-style button: .vr-server-back in the accent colour. */
+#vps-rent-app .vr-link { width: fit-content; padding: 0; border: 0; background: transparent; color: var(--vr-accent); font-size: 12px; cursor: pointer; text-align: left; white-space: nowrap; }
+#vps-rent-app .vr-link:hover { text-decoration: underline; }
+
+/* Activity log: day groups are .vr-server-panel cards, rows are a 4-column grid. */
+#vps-rent-app .vr-log { display: grid; gap: 12px; }
+#vps-rent-app .vr-log .vr-server-toolbar { min-height: 40px; }
+#vps-rent-app .vr-log-row { display: grid; grid-template-columns: 44px minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: center; gap: 2px 14px; padding: 9px 12px; font-size: 13px; }
+#vps-rent-app .vr-log-row + .vr-log-row { border-top: 1px solid var(--vr-line); }
+#vps-rent-app .vr-log-row time { font-variant-numeric: tabular-nums; }
+#vps-rent-app .vr-log-what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+#vps-rent-app .vr-log-actor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 600px) {
+  #vps-rent-app .vr-log-row { grid-template-columns: 44px minmax(0, 1fr); }
+  #vps-rent-app .vr-log-row > :nth-child(n + 3) { grid-column: 2; }
+}
+
+/* Cards with forms (operator workspace, ticket thread) */
+/* Any card can end with a form or an action row. */
+#vps-rent-app .vr-server-panel > .vr-form, #vps-rent-app .vr-server-panel > .vr-row { padding: 12px; }
+#vps-rent-app .vr-server-content + .vr-form, #vps-rent-app .vr-server-content + .vr-row { border-top: 1px solid var(--vr-line); }
+
+/* Card toolbars that start with a title keep their meta on the right. */
+#vps-rent-app .vr-server-toolbar > h2 { margin-inline-end: auto; }
+
+/* Cards are narrower than the page: tighter columns keep three fields in a row. */
+#vps-rent-app .vr-server-panel .vr-columns { gap: 12px; }
+
+/* Form whose fields share one line with the submit button. */
+#vps-rent-app .vr-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+#vps-rent-app .vr-inline-form .vr-field { flex: 1 1 260px; }
