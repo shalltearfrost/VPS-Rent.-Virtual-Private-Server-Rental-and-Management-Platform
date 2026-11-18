@@ -66,6 +66,26 @@ suspension and preparation are recorded manual workflows: this version does not
 call a provider API or perform actual host commands. Confirm actions only after
 performing them at the provider when using real infrastructure.
 
+## Load-test data
+
+`scripts/load_data.py` fills the database with about 480,000 related rows
+(2,000 customers, 3,000 servers, 20,000 orders, 50,000 tickets with 150,000
+messages, 200,000 history records) in roughly 15 seconds, and removes exactly
+those rows again:
+
+```powershell
+.venv/Scripts/python.exe scripts/load_data.py seed     # --scale 0.2 for fewer rows
+.venv/Scripts/python.exe scripts/load_data.py status
+.venv/Scripts/python.exe scripts/load_data.py purge
+```
+
+Generated accounts use `@<tag>.load.invalid` emails and cannot sign in;
+servers are named `load-<tag>-N` with 198.18.0.0/15 test addresses. Use
+`--tag` to keep several data sets apart and `--database` to target another
+database on the same server (for example `vpsrent_test`). Each command runs
+in one transaction. Purge never touches real rows; if a real order was
+allocated to a generated server, that server is kept and reported.
+
 ## Payments (Monobank)
 
 Payments use the Monobank acquiring API. Invoices are in euro and Monobank
