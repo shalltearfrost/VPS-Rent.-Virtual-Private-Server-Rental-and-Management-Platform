@@ -8,7 +8,7 @@ Andrii Moroz · Artem Ankudinov · Illia Yerokhin
 | --- | --- | --- |
 | Andrii Moroz | Allocation, inventory, operations, suspension/preparation | Matching resources, transactional assignment, pool entry, pending operation workflow, power state, expiry scan, suspension and credential rotation before reuse; customer control-panel UI |
 | Artem Ankudinov | Accounts, authorization, plans, orders | Registration/login/logout, session cookies/CSRF, server-side role/ownership checks, manager plan CRUD/disable, immutable order snapshots, catalogue, term selection and order UI |
-| Illia Yerokhin | Test payments, renewals, support, activity | Invoice/payment records and idempotency, exactly-once 30-day renewal, ticket/message/status workflows, audit records and their UI |
+| Illia Yerokhin | Payments, renewals, support, activity | Monobank acquiring payments in euro (signed webhooks, status polling, refunds), idempotency, exactly-once 30-day renewal, saved cards and automatic renewal, ticket/message/status workflows, audit records and their UI |
 
 Each member is responsible for reviewing their area, running the scenario and
 explaining the complete request flow at the review. Database design and
@@ -29,9 +29,10 @@ integration checks are shared.
    or operating external VPS instances. Replace them through operator inventory
    entry for a real hosting demonstration.
 
-All payments remain tests. Registration cannot grant staff roles. The operational
+Payments go through Monobank acquiring; with a Monobank test token no real
+money moves. Registration cannot grant staff roles. The operational
 and support permissions remain separate. No supplier purchase, proxy service,
-custom-domain billing, real payment gateway or claim about server location is
+custom-domain billing or claim about server location is
 included. Prices reproduce the approved mockup and are demo configuration.
 
 ## Open risks / next work

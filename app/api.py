@@ -9,7 +9,6 @@ from sqlalchemy import delete, select, text
 from app.config import get_settings
 from app.models import (
     Activity,
-    Invoice,
     LoginSession,
     OperationRequest,
     Order,
@@ -21,7 +20,6 @@ from app.models import (
     User,
 )
 from app.presenters import (
-    invoice_view,
     operation_view,
     order_view,
     plan_view,
@@ -33,7 +31,6 @@ from app.schemas import (
     MessageInput,
     OperationInput,
     OrderInput,
-    PaymentInput,
     PlanInput,
     PreparationInput,
     ResolutionInput,
@@ -62,9 +59,7 @@ from app.services import (
     flag_expired,
     owned_order,
     owned_rental,
-    pay_invoice,
     record,
-    renewal_invoice,
     request_operation,
     require_active,
     resolve_operation,
@@ -218,25 +213,6 @@ def order_details(order_id: int, user: Customer, db: Db):
     return order_view(db, owned_order(db, order_id, user))
 
 
-@router.get("/invoices/{invoice_id}")
-def invoice_details(invoice_id: int, user: Customer, db: Db):
-    invoice = db.get(Invoice, invoice_id)
-    if not invoice:
-        raise HTTPException(404, "Invoice not found")
-    owned_order(db, invoice.order_id, user)
-    return invoice_view(invoice)
-
-
-@router.post("/invoices/{invoice_id}/test-payment")
-def payment(invoice_id: int, data: PaymentInput, user: Customer, db: Db):
-    result = pay_invoice(db, user, invoice_id, data)
-    return {
-        "id": result.id,
-        "invoice_id": result.invoice_id,
-        "outcome": result.outcome,
-    }
-
-
 @router.get("/rentals")
 def rentals(user: Customer, db: Db):
     return [
@@ -263,11 +239,6 @@ def reveal_password(rental_id: int, user: Customer, db: Db):
     server = db.get(Server, rental.server_id)
     record(db, user, "password_viewed", "rental", rental.id, "Viewed by owner")
     return {"password": decrypt_password(server.password_ciphertext)}
-
-
-@router.post("/rentals/{rental_id}/renewal-invoice")
-def renew(rental_id: int, user: Customer, db: Db):
-    return invoice_view(renewal_invoice(db, user, rental_id))
 
 
 @router.post("/rentals/{rental_id}/operations", status_code=201)

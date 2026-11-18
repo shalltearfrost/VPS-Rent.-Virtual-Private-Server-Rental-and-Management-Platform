@@ -44,11 +44,6 @@ class OrderInput(Input):
     term: Literal["monthly", "annual"]
 
 
-class PaymentInput(Input):
-    outcome: Literal["succeeded", "failed"]
-    idempotency_key: str = Field(min_length=16, max_length=64)
-
-
 class AllocationInput(Input):
     server_id: int = Field(gt=0)
 

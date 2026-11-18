@@ -26,9 +26,16 @@ there are no build tools or external frontend services required at runtime.
    loads the current customer session and CSRF token, then locks the plan.
    The backend copies resource and price values into an order and creates its
    invoice. The customer cannot send their own price or customer ID.
-3. `POST /api/invoices/{id}/test-payment` checks invoice ownership and locks the
-   order/invoice. A successful record marks the invoice paid and the order
-   awaiting_allocation atomically. The payment carries an idempotency key.
+3. `POST /api/invoices/{id}/payments` checks invoice ownership and locks the
+   order/invoice and creates a Monobank acquiring invoice for the same euro
+   amount (`ccy` 978, no conversion). The browser is redirected to its `pageUrl`;
+   afterwards Monobank returns the customer to `#invoice/{id}`. The payment
+   status comes only from Monobank: a signed webhook (ECDSA, `X-Sign`) when
+   `PUBLIC_URL` is https, plus polling of `invoice/status` by the background
+   worker and the invoice page. Success marks the invoice paid and the order
+   awaiting_allocation atomically. All Monobank HTTP calls live in
+   `app/billing/monobank.py`; payment state transitions live in
+   `app/billing/service.py` and the endpoints in `app/billing/routes.py`.
 4. `GET /api/operator/queue` requires an operator. Allocation locks order then
    server, validates exact resource matching and availability, and inserts a
    rental. A partial unique index prevents more than one held rental per server.
@@ -47,8 +54,8 @@ unauthenticated access returns 401 and forbidden staff actions return 403.
 | Resource/action | Customer | Operator | Support | Manager |
 | --- | --- | --- | --- | --- |
 | Public active catalogue | Read | Read | Read | Read |
-| Orders/invoices/test payment | Own | Allocation queue only | No | No |
-| Rental access/password/renewal | Own | Operational inventory only | Ticket context without password | No |
+| Orders/invoices/payments/saved cards | Own | Allocation queue only | No | No |
+| Rental access/password/renewal/auto-renewal | Own | Operational inventory only | Ticket context without password | No |
 | Allocation, operation resolution, suspension/preparation | No | Yes | No | No |
 | Request server operations | Own active rental | No | No | No |
 | Support conversations | Own | No | Yes | No |
