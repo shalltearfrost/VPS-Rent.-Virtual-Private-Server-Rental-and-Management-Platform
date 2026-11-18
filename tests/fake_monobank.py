@@ -82,6 +82,17 @@ class FakeMonobank:
         self.requests.append((request.method, path, body))
         if request.headers.get("X-Token") != "test-token":
             return httpx.Response(403, json={"errText": "forbidden"})
+        if path == "/bank/currency":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "currencyCodeA": 978,
+                        "currencyCodeB": 980,
+                        "rateSell": 49.54,
+                    }
+                ],
+            )
         if path == "/api/merchant/details":
             return httpx.Response(200, json={"merchantId": "test_fixture"})
         if path == "/api/merchant/invoice/create":

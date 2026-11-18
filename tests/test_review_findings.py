@@ -33,7 +33,7 @@ def replace_transport(monobank, handler):
     "changes",
     [
         {"amount": 1},
-        {"ccy": 980},
+        {"ccy": 978},
         {"finalAmount": 1},
     ],
 )

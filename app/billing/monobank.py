@@ -5,6 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -172,11 +173,18 @@ class Monobank:
                 token = None
             if token is not None and not isinstance(token, str):
                 raise ValueError("Invalid card token")
+            reason = data.get("failureReason")
+            if reason and (
+                not isinstance(reason, str) or not reason.isascii()
+            ):
+                reason = "Payment declined by the issuing bank"
+                if data.get("errCode"):
+                    reason += f" (code {data['errCode']})"
             return InvoiceState(
                 invoice_id=value.invoice_id,
                 status=value.status,
                 modified_at=value.modified_at,
-                failure_reason=data.get("failureReason"),
+                failure_reason=reason,
                 card_token=token,
                 masked_pan=payment.get("maskedPan"),
                 amount=value.amount,
@@ -189,6 +197,54 @@ class Monobank:
             raise MonobankError(
                 "Monobank returned an invalid payment state", uncertain=True
             ) from error
+
+    def quote(self, amount: int, currency: str) -> tuple[int, str]:
+        """Freeze a UAH charge before the bank can convert the invoice."""
+        self.ensure_sandbox()
+        if currency == "UAH":
+            return amount, currency
+        if currency != "EUR":
+            raise MonobankError("Only EUR and UAH invoices are supported")
+        with self._lock:
+            if time.monotonic() >= getattr(self, "_rate_until", 0):
+                try:
+                    response = self.http.get("/bank/currency")
+                    response.raise_for_status()
+                    rates = response.json()
+                    if not isinstance(rates, list) or any(
+                        not isinstance(item, dict) for item in rates
+                    ):
+                        raise ValueError("Invalid exchange rates")
+                    entry = next(
+                        item
+                        for item in rates
+                        if item.get("currencyCodeA") == 978
+                        and item.get("currencyCodeB") == 980
+                    )
+                    rate = Decimal(str(entry.get("rateSell")))
+                    if not rate.is_finite() or not 0 < rate < 10000:
+                        raise ValueError("Invalid exchange rate")
+                except (
+                    httpx.HTTPError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    StopIteration,
+                    InvalidOperation,
+                ) as error:
+                    raise MonobankError(
+                        "The EUR/UAH payment quote is unavailable"
+                    ) from error
+                self._rate = rate
+                self._rate_until = time.monotonic() + 600
+            quoted = int(
+                (Decimal(amount) * self._rate).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            )
+        if quoted <= 0:
+            raise MonobankError("The payment amount is too small")
+        return quoted, "UAH"
 
     def create_invoice(
         self,

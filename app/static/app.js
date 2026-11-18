@@ -30,7 +30,8 @@
     running: 'Running', stopped: 'Stopped', pending: 'Pending',
     completed: 'Completed', rejected: 'Rejected', paid: 'Paid', unpaid: 'Unpaid',
     open: 'Open', closed: 'Closed', failed: 'Failed', preparing: 'Preparing',
-    succeeded: 'Succeeded', refunded: 'Refunded',
+    succeeded: 'Succeeded', refunded: 'Refunded', disabled: 'Disabled',
+    reserved: 'Queued', uncertain: 'Needs review', refund_pending: 'Refund pending',
   };
   const tones = {
     paid: 'good', active: 'good', running: 'good', completed: 'good',
@@ -106,7 +107,8 @@
     });
     const { page, id } = route();
     if (role === 'customer' && page === 'invoice' && id) {
-      paths.invoice = `/invoices/${id}`;
+      // Reconciliation can extend a rental; read rentals after it commits.
+      state.invoice = await api(`/invoices/${id}`);
     }
     if (role === 'operator') Object.assign(paths, {
       queue: '/operator/queue', pool: '/operator/servers',
@@ -186,7 +188,7 @@
         ${!blocked || canContinue ? button(canContinue ? 'Continue payment' : label, `data-action="pay" data-id="${invoice.id}"`, true) : ''}
         ${blocked ? button('Check status', `data-page="invoice" data-id="${invoice.id}"`) : ''}
       </div>
-      <p class="vr-small">Monobank test mode · No real money is charged.</p>
+      <p class="vr-small">Monobank test mode · No real money is charged. EUR prices are charged in UAH at the quoted rate shown by the bank.</p>
     </div>`;
   }
 
@@ -263,13 +265,17 @@
       </div></section>` + renewalSection(rental);
   }
 
+  function savedCards() {
+    return state.cards.length ? `<div class="vr-cards"><h3>Saved cards</h3>${state.cards.map(card => `<div class="vr-row vr-small"><span>${safe(card.masked_pan)} · added ${date(card.created_at)}</span>${button('Remove', `data-action="remove-card" data-id="${card.id}" aria-label="Remove card ${safe(card.masked_pan)}"`)}</div>`).join('')}</div>` : '';
+  }
+
   function renewalSection(rental) {
     const order = state.orders.find(item => item.id === rental.order_id);
     const open = order?.invoices.find(item => item.kind === 'renewal' && item.status === 'unpaid');
     const history = (order?.invoices || []).filter(item => item.kind === 'renewal' && item.status === 'paid').reverse();
     if (!activeRental(rental)) {
       return `<section class="vr-server-panel vr-renewal" aria-label="Renewal"><div class="vr-renewal-body">
-        <h2>Renewal</h2><p class="vr-small">This rental has expired and can no longer be renewed. Contact support if you need the server back.</p>
+        <h2>Renewal</h2><p class="vr-small">This rental has expired and can no longer be renewed. Contact support if you need the server back.</p>${savedCards()}
       </div></section>`;
     }
     const cardOptions = state.cards.map(card => `<option value="${card.id}" ${card.id === rental.auto_renew_card_id ? 'selected' : ''}>${safe(card.masked_pan)}</option>`).join('');
@@ -277,7 +283,7 @@
       ? `<label class="vr-field">Automatic renewal<select data-auto-renew data-id="${rental.id}"><option value="">Off</option>${cardOptions}</select></label>
          <p class="vr-small">${rental.auto_renew_at ? `The card is charged ${money(rental.renewal_cents)} from ${date(rental.auto_renew_at)}, before the rental expires. Failed charges are retried.` : 'Choose a saved card to renew this server automatically before it expires.'}</p>`
       : '<p class="vr-small">To renew automatically, pay once with "Save card for automatic renewal" selected.</p>';
-    const cards = state.cards.length ? `<div class="vr-cards"><h3>Saved cards</h3>${state.cards.map(card => `<div class="vr-row vr-small"><span>${safe(card.masked_pan)} · added ${date(card.created_at)}</span>${button('Remove', `data-action="remove-card" data-id="${card.id}" aria-label="Remove card ${safe(card.masked_pan)}"`)}</div>`).join('')}</div>` : '';
+    const cards = savedCards();
     return `<section class="vr-server-panel vr-renewal" aria-label="Renewal"><div class="vr-renewal-body">
       <div class="vr-row"><h2>Renewal</h2><span class="vr-small">Expires ${date(rental.expires_at)}</span></div>
       <dl class="vr-invoice-details"><div><dt>Extension</dt><dd>30 days</dd></div><div><dt>Price</dt><dd>${money(rental.renewal_cents)}</dd></div></dl>
@@ -293,6 +299,8 @@
     if (!invoice) return heading('Payment') + panel('<p>Loading payment status…</p>');
     const payment = invoice.payment;
     const rental = invoice.rental_id && state.rentals.find(item => item.id === invoice.rental_id);
+    const canPay = rental ? activeRental(rental)
+      : state.orders.some(order => order.id === invoice.order_id && order.status === 'awaiting_payment');
     const back = rental
       ? button('Back to server', `data-page="server" data-id="${rental.id}"`, true)
       : button('Back to orders', 'data-page="orders"', true);
@@ -324,8 +332,8 @@
     return heading(title, `${invoice.number} · ${invoice.plan_name}`) + panel(`
       <div class="vr-row"><strong>${money(invoice.amount_cents)}</strong>${badge(payment?.status === 'pending' ? 'pending' : invoice.status)}</div>
       ${text ? `<p>${safe(text)}</p>` : ''}
-      ${invoice.status === 'paid' || openPayment(payment) || payment?.review_required ? '' : payBlock(invoice, 'Try again')}
-      <div class="vr-actions">${payment?.status === 'pending' ? button('Continue payment', `data-action="pay" data-id="${invoice.id}"`) : ''}${back}</div>
+      ${!canPay || invoice.status === 'paid' || openPayment(payment) || payment?.review_required ? '' : payBlock(invoice, 'Try again')}
+      <div class="vr-actions">${payment?.status === 'pending' && payment.page_url && payment.initiated_by !== 'auto' ? button('Continue payment', `data-action="pay" data-id="${invoice.id}"`) : ''}${back}</div>
     `);
   }
 
@@ -359,7 +367,7 @@
       const matching = state.pool.filter(server => server.state === 'available'
         && ['cpu', 'ram_gb', 'disk_gb'].every(key => order[key] === server[key]));
       return panel(`<div class="vr-row"><h2>Order #${order.id} · ${safe(order.plan_name)}</h2>${badge(order.status)}</div><p class="vr-small">${resources(order)}</p>
-        ${matching.length ? `<form class="vr-form" data-form="allocate" data-id="${order.id}"><label class="vr-field">Available server<select name="server_id">${matching.map(server => `<option value="${server.id}">${safe(server.name)} · ${safe(server.address)}</option>`).join('')}</select></label><button class="vr-button vr-primary">Assign server</button></form>` : '<p class="vr-small">No matching server available. This order stays in the queue.</p>'}`);
+        ${order.invoices.some(invoice => invoice.payment?.review_required) ? '<p class="vr-small vr-payment-error">Payment needs review. Allocation is blocked.</p>' : matching.length ? `<form class="vr-form" data-form="allocate" data-id="${order.id}"><label class="vr-field">Available server<select name="server_id">${matching.map(server => `<option value="${server.id}">${safe(server.name)} · ${safe(server.address)}</option>`).join('')}</select></label><button class="vr-button vr-primary">Assign server</button></form>` : '<p class="vr-small">No matching server available. This order stays in the queue.</p>'}`);
     }).join('') : empty('No orders awaiting allocation'));
   }
 
@@ -412,7 +420,7 @@
 
   function manage() {
     return heading('Rental plans') + button('Create plan', 'data-page="edit-plan"', true)
-      + state.managedPlans.map(plan => panel(`<div class="vr-row"><h2>${safe(plan.name)}</h2>${badge(plan.enabled ? 'active' : 'closed')}</div><p class="vr-small">${resources(plan)} · ${money(plan.monthly_cents)} / 30 days</p><div class="vr-actions">${button('Edit', `data-page="edit-plan" data-id="${plan.id}"`)}${button(plan.enabled ? 'Disable' : 'Enable', `data-action="toggle-plan" data-id="${plan.id}"`)}</div>`)).join('');
+      + state.managedPlans.map(plan => panel(`<div class="vr-row"><h2>${safe(plan.name)}</h2>${badge(plan.enabled ? 'active' : 'disabled')}</div><p class="vr-small">${resources(plan)} · ${money(plan.monthly_cents)} / 30 days</p><div class="vr-actions">${button('Edit', `data-page="edit-plan" data-id="${plan.id}"`)}${button(plan.enabled ? 'Disable' : 'Enable', `data-action="toggle-plan" data-id="${plan.id}"`)}</div>`)).join('');
   }
 
   function editPlan(id) {
@@ -584,6 +592,7 @@
         const order = await api('/orders', 'POST', {
           plan_id: state.selectedPlan, term: data.term,
         });
+        state.selectedPlan = null;
         state.openOrders.add(order.id); await refresh(); go('orders');
       } else if (type === 'allocate') {
         await api(`/operator/orders/${id}/allocate`, 'POST', { server_id: Number(data.server_id) });

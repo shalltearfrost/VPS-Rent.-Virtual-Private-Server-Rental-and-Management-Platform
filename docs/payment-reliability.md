@@ -2,8 +2,8 @@
 
 All gateway operations verify a test merchant before contacting a financial
 endpoint. Live merchant tokens are rejected. A hosted page must use one of the
-known Monobank HTTPS payment hosts. New payments charge their EUR invoice
-amount directly; settlement validates the stored amount, currency, provider
+known Monobank HTTPS payment hosts. New payments freeze an explicit UAH quote
+for the EUR invoice; settlement validates the stored amount, currency, provider
 invoice, reference when supplied, and final amount before fulfilling a rental.
 
 ## Durable automatic renewal
@@ -45,3 +45,12 @@ uses `httpx.MockTransport`; PostgreSQL remains real.
 Run `python -m alembic upgrade head` before starting the updated application.
 The added migration preserves existing payments and adds explicit attempt and
 refund states. Financial state is intentionally not downgraded automatically.
+
+## Sandbox settlement currency
+
+The live sandbox accepts EUR creation requests but converts the payment to UAH.
+VPS Rent therefore quotes EUR prices with the official public EUR/UAH sell rate,
+rounds half up to kopecks and saves the exact UAH charge before creating a page
+or reserving an automatic charge. All later notifications must match that saved
+amount and currency. A retry of an open invoice reuses its original quote.
+The invoice remains denominated in EUR; card entry stays on the bank's page.

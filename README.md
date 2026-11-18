@@ -1,6 +1,6 @@
-Andrii Moroz · Artem Ankudinov · Illia Yerokhin
+Andrii Moroz Â· Artem Ankudinov Â· Illia Yerokhin
 
-# VPS Rent — Alpha
+# VPS Rent â€” Alpha
 
 FastAPI + PostgreSQL rental platform.
 
@@ -113,3 +113,8 @@ After the initial setup, Windows can also launch the application in a hidden
 background process using `./scripts/serve.ps1 -Background`. Stop that process
 with `./scripts/stop.ps1`; the stop script verifies the executable and command
 before stopping it. These scripts do not install dependencies or reset data.
+
+The verified sandbox converts EUR payments to UAH. New checkout and automatic
+renewal freeze an explicit UAH quote from the public EUR/UAH sell rate.
+The saved quote, not the EUR invoice amount, is validated at settlement.
+See `docs/payment-reliability.md` for failure and refund states.

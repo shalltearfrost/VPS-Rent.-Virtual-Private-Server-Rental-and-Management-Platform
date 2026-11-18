@@ -386,10 +386,12 @@ def start_payment(
         raise HTTPException(409, "This order cannot accept an initial payment")
     reference = uuid4().hex
     try:
-        # Monobank charges the invoice currency directly (EUR, ccy 978).
+        charge_amount, charge_currency = gateway.quote(
+            invoice.amount_cents, invoice.currency
+        )
         state = gateway.create_invoice(
-            amount=invoice.amount_cents,
-            currency=invoice.currency,
+            amount=charge_amount,
+            currency=charge_currency,
             reference=reference,
             destination=destination(invoice, order),
             redirect_url=f"{settings.public_url}/#invoice/{invoice.id}",
@@ -410,8 +412,8 @@ def start_payment(
         page_url=state.page_url,
         save_card=data.save_card,
         reference=reference,
-        charge_amount=invoice.amount_cents,
-        charge_currency=invoice.currency,
+        charge_amount=charge_amount,
+        charge_currency=charge_currency,
     )
     db.add(payment)
     db.flush()
@@ -577,6 +579,9 @@ def auto_renew(db: Session, gateway: Monobank, rental_id: int) -> str:
     retry = timedelta(hours=get_settings().auto_renew_retry_hours)
     if last and last.created_at > now() - retry:
         return "waiting_retry"
+    charge_amount, charge_currency = gateway.quote(
+        invoice.amount_cents, invoice.currency
+    )
     db.add(
         Payment(
             invoice_id=invoice.id,
@@ -587,8 +592,8 @@ def auto_renew(db: Session, gateway: Monobank, rental_id: int) -> str:
             provider="monobank",
             initiated_by="auto",
             card_id=card.id,
-            charge_amount=invoice.amount_cents,
-            charge_currency=invoice.currency,
+            charge_amount=charge_amount,
+            charge_currency=charge_currency,
         )
     )
     db.flush()

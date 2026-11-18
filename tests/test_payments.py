@@ -47,8 +47,8 @@ def test_initial_payment_is_charged_in_euro(clients, inventory, monobank):
         for method, path, body in monobank.requests
         if path == "/api/merchant/invoice/create"
     )
-    # Invoice amount in euro cents, ISO 4217 code 978 (EUR), no conversion.
-    assert sent["amount"] == 169 and sent["ccy"] == 978
+    # EUR prices are converted once; exact UAH quote is persisted.
+    assert sent["amount"] == 8372 and sent["ccy"] == 980
     assert sent["redirectUrl"].endswith(f"/#invoice/{invoice_id}")
     assert "webHookUrl" not in sent  # PUBLIC_URL is plain http locally
     assert "saveCardData" not in sent
@@ -237,7 +237,7 @@ def test_auto_renewal_charges_saved_card_once(
     assert len(charges) == 1
     assert charges[0]["initiationKind"] == "merchant"
     assert charges[0]["cardToken"].startswith("card-token-")
-    assert charges[0]["amount"] == 169 and charges[0]["ccy"] == 978
+    assert charges[0]["amount"] == 8372 and charges[0]["ccy"] == 980
     db.expire_all()
     assert db.get(Rental, rental_id).expires_at == expires + timedelta(days=30)
     auto = db.scalar(select(Payment).where(Payment.initiated_by == "auto"))
