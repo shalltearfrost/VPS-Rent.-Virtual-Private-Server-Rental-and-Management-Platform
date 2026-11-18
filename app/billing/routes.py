@@ -62,7 +62,12 @@ def pay(
 @router.post("/payments/monobank/webhook", include_in_schema=False)
 async def monobank_webhook(request: Request, gateway: Gateway, db: Db):
     """Signed status callback. Polling covers missed or local webhooks."""
-    body = await request.body()
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 64_000:
+            raise HTTPException(413, "Payment notification is too large")
+    body = bytes(body)
     signature = request.headers.get("x-sign", "")
     try:
         valid = await run_in_threadpool(

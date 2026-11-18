@@ -163,22 +163,30 @@
 
   function paymentNote(payment) {
     if (!payment) return '';
+    if (payment.review_required) return '<p class="vr-small vr-payment-error">Payment needs review. No automatic retry will be made. Please contact support.</p>';
+    if (payment.status === 'uncertain') return '<p class="vr-small">Bank confirmation is unknown. Another charge is blocked until this attempt is reconciled.</p>';
+    if (payment.status === 'reserved') return '<p class="vr-small">Automatic renewal is queued.</p>';
+    if (payment.status === 'refund_pending') return '<p class="vr-small">Refund requested. Waiting for confirmation from monobank.</p>';
     if (payment.status === 'failed') return `<p class="vr-small vr-payment-error">Last payment attempt failed: ${safe(payment.failure_reason || 'declined')}</p>`;
     if (payment.status === 'refunded') return `<p class="vr-small vr-payment-error">Payment refunded: ${safe(payment.failure_reason || '')}</p>`;
     if (payment.status === 'pending') return '<p class="vr-small">A monobank payment page is open. Finish it or check its status.</p>';
     return '';
   }
 
-  function payBlock(invoice, label = 'Pay with monobank') {
+  const openPayment = payment => payment && ['reserved', 'uncertain', 'pending', 'refund_pending'].includes(payment.status);
+
+  function payBlock(invoice, label = 'Pay with monobank · Test') {
     const pending = invoice.payment?.status === 'pending';
+    const blocked = openPayment(invoice.payment) || invoice.payment?.review_required;
+    const canContinue = pending && invoice.payment.page_url && invoice.payment.initiated_by !== 'auto';
     return `<div class="vr-pay">
       ${paymentNote(invoice.payment)}
-      ${pending ? '' : `<label class="vr-check"><input type="checkbox" data-save-card${state.saveCard ? ' checked' : ''}> Save card for automatic renewal</label>`}
+      ${blocked ? '' : `<label class="vr-check"><input type="checkbox" data-save-card${state.saveCard ? ' checked' : ''}> Save card for automatic renewal</label>`}
       <div class="vr-actions">
-        ${button(pending ? 'Continue payment' : label, `data-action="pay" data-id="${invoice.id}"`, true)}
-        ${pending ? button('Check status', `data-page="invoice" data-id="${invoice.id}"`) : ''}
+        ${!blocked || canContinue ? button(canContinue ? 'Continue payment' : label, `data-action="pay" data-id="${invoice.id}"`, true) : ''}
+        ${blocked ? button('Check status', `data-page="invoice" data-id="${invoice.id}"`) : ''}
       </div>
-      <p class="vr-small">${money(invoice.amount_cents)} is charged in euro through monobank.</p>
+      <p class="vr-small">Monobank test mode · No real money is charged.</p>
     </div>`;
   }
 
@@ -290,7 +298,15 @@
       : button('Back to orders', 'data-page="orders"', true);
     let title = 'Payment not started';
     let text = '';
-    if (invoice.status === 'paid') {
+    if (payment?.review_required || payment?.status === 'uncertain') {
+      title = 'Payment needs review';
+      text = 'Bank confirmation is unknown. No new charge will be made until this attempt is reconciled. Please contact support.';
+    } else if (payment?.status === 'refund_pending') {
+      title = 'Refund pending';
+      text = 'The refund has been requested and is awaiting confirmation from monobank.';
+    } else if (payment?.status === 'reserved') {
+      title = 'Automatic renewal queued';
+    } else if (invoice.status === 'paid') {
       title = 'Payment received';
       text = invoice.kind === 'renewal'
         ? `Your rental was extended by 30 days${rental ? `, until ${date(rental.expires_at)}` : ''}.`
@@ -308,7 +324,7 @@
     return heading(title, `${invoice.number} · ${invoice.plan_name}`) + panel(`
       <div class="vr-row"><strong>${money(invoice.amount_cents)}</strong>${badge(payment?.status === 'pending' ? 'pending' : invoice.status)}</div>
       ${text ? `<p>${safe(text)}</p>` : ''}
-      ${invoice.status === 'paid' || payment?.status === 'pending' ? '' : payBlock(invoice, 'Try again')}
+      ${invoice.status === 'paid' || openPayment(payment) || payment?.review_required ? '' : payBlock(invoice, 'Try again')}
       <div class="vr-actions">${payment?.status === 'pending' ? button('Continue payment', `data-action="pay" data-id="${invoice.id}"`) : ''}${back}</div>
     `);
   }
@@ -317,7 +333,7 @@
     clearTimeout(invoiceTimer);
     const { page, id } = route();
     if (page !== 'invoice' || state.invoice?.id !== id) return;
-    if (state.invoice.payment?.status !== 'pending') return;
+    if (!openPayment(state.invoice.payment)) return;
     invoiceTimer = setTimeout(async () => {
       if (route().page !== 'invoice') return;
       try { await refresh(); } catch (error) { notice(error.message, true); }

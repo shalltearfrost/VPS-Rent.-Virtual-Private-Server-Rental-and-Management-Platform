@@ -14,6 +14,9 @@ def payment_view(payment: Payment | None) -> dict | None:
         # The hosted page is only useful while the payment is open.
         "page_url": payment.page_url if payment.status == "pending" else None,
         "failure_reason": payment.failure_reason,
+        "review_required": payment.review_required,
+        "charge_amount": payment.charge_amount,
+        "charge_currency": payment.charge_currency,
         "created_at": payment.created_at,
     }
 

@@ -24,6 +24,7 @@ class FakeMonobank:
         self.refunds: list[str] = []
         self.deleted_cards: list[str] = []
         self.charge_status = "success"
+        self.refund_status = "success"
         self.charge_error: str | None = None
         self.create_error: str | None = None
         self._ids = itertools.count(1)
@@ -81,6 +82,8 @@ class FakeMonobank:
         self.requests.append((request.method, path, body))
         if request.headers.get("X-Token") != "test-token":
             return httpx.Response(403, json={"errText": "forbidden"})
+        if path == "/api/merchant/details":
+            return httpx.Response(200, json={"merchantId": "test_fixture"})
         if path == "/api/merchant/invoice/create":
             if self.create_error:
                 return httpx.Response(400, json={"errText": self.create_error})
@@ -100,7 +103,7 @@ class FakeMonobank:
                 200,
                 json={
                     "invoiceId": invoice_id,
-                    "pageUrl": f"https://pay.mbnk.test/{invoice_id}",
+                    "pageUrl": f"https://pay.mbnk.biz/{invoice_id}",
                 },
             )
         if path == "/api/merchant/invoice/status":
@@ -111,8 +114,18 @@ class FakeMonobank:
             return httpx.Response(200)
         if path == "/api/merchant/invoice/cancel":
             self.refunds.append(body["invoiceId"])
-            self.finish(body["invoiceId"], "reversed")
-            return httpx.Response(200, json={"status": "success"})
+            invoice = self.invoices[body["invoiceId"]]
+            invoice.setdefault("cancelList", []).append(
+                {
+                    "extRef": body["extRef"],
+                    "status": self.refund_status,
+                    "amount": invoice["amount"],
+                    "ccy": invoice["ccy"],
+                }
+            )
+            if self.refund_status == "success":
+                self.finish(body["invoiceId"], "reversed")
+            return httpx.Response(200, json={"status": self.refund_status})
         if path == "/api/merchant/wallet/payment":
             if self.charge_error:
                 return httpx.Response(400, json={"errText": self.charge_error})
@@ -122,6 +135,7 @@ class FakeMonobank:
                 "status": "processing",
                 "amount": body["amount"],
                 "ccy": body["ccy"],
+                "reference": body["merchantPaymInfo"]["reference"],
                 "createdDate": self.tick(),
                 "modifiedDate": self._clock.isoformat(),
                 "_wallet": None,

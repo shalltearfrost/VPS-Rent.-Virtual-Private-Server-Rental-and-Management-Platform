@@ -1,7 +1,8 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,14 +16,20 @@ class Settings(BaseSettings):
     expiry_interval_seconds: int = Field(default=30, ge=1, le=3600)
 
     # Monobank acquiring. An empty token disables payments (HTTP 503).
-    monobank_token: SecretStr = SecretStr("")
+    monobank_token: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("MONOBANK_TOKEN", "MONOBANK_TEST_TOKEN"),
+    )
     monobank_api_url: str = "https://api.monobank.ua"
     monobank_wallet_prefix: str = Field(
         default="vpsrent", pattern=r"^[A-Za-z0-9_-]{1,32}$"
     )
     # Address customers use to reach the app. Used for the redirect after
     # payment and, when it is https, for Monobank webhooks.
-    public_url: str = "http://127.0.0.1:8000"
+    public_url: str = Field(
+        default="http://127.0.0.1:8000",
+        validation_alias=AliasChoices("PUBLIC_URL", "MONOBANK_PUBLIC_URL"),
+    )
     payment_validity_seconds: int = Field(default=3600, ge=300, le=86400)
     auto_renew_days_before: int = Field(default=3, ge=1, le=25)
     auto_renew_retry_hours: int = Field(default=12, ge=1, le=72)
@@ -30,9 +37,23 @@ class Settings(BaseSettings):
     @field_validator("public_url")
     @classmethod
     def clean_public_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("PUBLIC_URL must start with http:// or https://")
-        return value.rstrip("/")
+        value = value.strip().rstrip("/") or "http://127.0.0.1:8000"
+        parts = urlsplit(value)
+        if (
+            not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or parts.scheme not in {"http", "https"}
+            or (
+                parts.scheme == "http"
+                and parts.hostname not in {"localhost", "127.0.0.1", "::1"}
+            )
+        ):
+            raise ValueError("PUBLIC_URL must be HTTPS or a localhost origin")
+        return value
 
     @property
     def webhook_url(self) -> str | None:

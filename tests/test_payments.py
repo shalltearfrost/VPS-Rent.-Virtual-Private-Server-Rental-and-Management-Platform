@@ -41,7 +41,7 @@ def test_initial_payment_is_charged_in_euro(clients, inventory, monobank):
     assert started.status_code == 201, started.text
     payment = started.json()
     assert payment["status"] == "pending"
-    assert payment["page_url"].startswith("https://pay.mbnk.test/")
+    assert payment["page_url"].startswith("https://pay.mbnk.biz/")
     sent = next(
         body
         for method, path, body in monobank.requests
@@ -81,7 +81,7 @@ def test_payments_need_a_configured_token(clients, inventory):
         json={"idempotency_key": "no-token-payment"},
     )
     assert response.status_code == 503
-    assert "MONOBANK_TOKEN" in response.json()["detail"]
+    assert "not configured" in response.json()["detail"]
 
 
 def test_bank_errors_do_not_create_payments(clients, inventory, monobank, db):
@@ -142,7 +142,13 @@ def test_signed_webhook_and_out_of_order_delivery(
     db.expire_all()
     assert db.get(Invoice, invoice_id).status == "paid"
     assert db.scalar(select(Payment.status)) == "succeeded"
-    unknown = json.dumps({"invoiceId": "other", "status": "success"}).encode()
+    unknown = json.dumps(
+        {
+            **success,
+            "invoiceId": "other",
+            "reference": "unrelated",
+        }
+    ).encode()
     assert (
         hook.post(
             WEBHOOK,
@@ -286,7 +292,7 @@ def test_expired_rental_is_never_auto_renewed(
 
 
 def test_late_success_after_expiry_is_refunded(
-    clients, active_rental, monobank, db
+    clients, active_rental, monobank, db, test_database
 ):
     customer = clients["customer"]
     rental_id = active_rental["id"]
@@ -295,6 +301,9 @@ def test_late_success_after_expiry_is_refunded(
     expired_at = move_expiry(db, rental_id, timedelta(seconds=-5))
     clients["operator"].post("/api/operator/expiry-scan")
     monobank.finish(at=now())
+    result = customer.get(f"/api/invoices/{invoice['id']}").json()
+    assert result["payment"]["status"] == "refund_pending"
+    run_billing_cycle(test_database, monobank.gateway)
     result = customer.get(f"/api/invoices/{invoice['id']}").json()
     assert result["status"] == "unpaid"
     assert result["payment"]["status"] == "refunded"

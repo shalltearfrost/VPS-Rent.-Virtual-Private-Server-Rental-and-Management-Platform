@@ -235,7 +235,8 @@ class Payment(Record, Timestamped, Base):
     __tablename__ = "payments"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'succeeded', 'failed', 'refunded')",
+            "status IN ('reserved', 'uncertain', 'pending', "
+            "'refund_pending', 'succeeded', 'failed', 'refunded')",
             name="payment_status",
         ),
         CheckConstraint(
@@ -246,8 +247,15 @@ class Payment(Record, Timestamped, Base):
         ),
         CheckConstraint(
             "provider = 'test' OR provider_invoice_id IS NOT NULL "
-            "OR status = 'failed'",
+            "OR status IN ('reserved', 'uncertain', 'failed')",
             name="payment_provider_details",
+        ),
+        CheckConstraint(
+            "(charge_amount IS NULL AND charge_currency IS NULL) OR "
+            "(charge_amount > 0 AND charge_amount IS NOT NULL AND "
+            "charge_currency IN ('EUR', 'USD', 'UAH') "
+            "AND charge_currency IS NOT NULL)",
+            name="payment_charge_quote",
         ),
         Index(
             "uq_successful_payment",
@@ -259,7 +267,10 @@ class Payment(Record, Timestamped, Base):
             "uq_pending_payment",
             "invoice_id",
             unique=True,
-            postgresql_where=text("status = 'pending'"),
+            postgresql_where=text(
+                "status IN ('reserved', 'uncertain', 'pending', "
+                "'refund_pending')"
+            ),
         ),
         Index("ix_payments_status", "status", "updated_at"),
     )
@@ -277,6 +288,16 @@ class Payment(Record, Timestamped, Base):
     save_card: Mapped[bool] = mapped_column(Boolean, default=False)
     card_id: Mapped[int | None] = reference("payment_cards")
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    reference: Mapped[str | None] = mapped_column(String(64), unique=True)
+    charge_amount: Mapped[int | None] = mapped_column(BigInteger)
+    charge_currency: Mapped[str | None] = mapped_column(String(3))
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    refund_reference: Mapped[str | None] = mapped_column(
+        String(64), unique=True
+    )
+    refund_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     provider_modified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )

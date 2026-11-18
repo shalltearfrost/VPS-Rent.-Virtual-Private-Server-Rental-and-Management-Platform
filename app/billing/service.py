@@ -16,6 +16,7 @@ from app.billing.monobank import (
     InvoiceState,
     Monobank,
     MonobankError,
+    currency_code,
 )
 from app.billing.schemas import PaymentInput
 from app.config import get_settings
@@ -25,6 +26,7 @@ from app.services import owned_order, owned_rental, record, require_active
 
 logger = logging.getLogger(__name__)
 RENEWAL_DAYS = 30
+OPEN_PAYMENTS = {"reserved", "uncertain", "pending", "refund_pending"}
 
 
 def _lock(db: Session, model, record_id: int, *, skip_locked=False):
@@ -62,7 +64,8 @@ def lock_payment(db: Session, payment_id: int):
 def pending_payment(db: Session, invoice: Invoice) -> Payment | None:
     return db.scalar(
         select(Payment).where(
-            Payment.invoice_id == invoice.id, Payment.status == "pending"
+            Payment.invoice_id == invoice.id,
+            Payment.status.in_(OPEN_PAYMENTS),
         )
     )
 
@@ -106,6 +109,8 @@ def remember_card(
         )
     )
     if card:
+        if card.customer_id != customer_id:
+            raise HTTPException(409, "Card belongs to another account")
         return card
     card = PaymentCard(
         customer_id=customer_id,
@@ -135,26 +140,22 @@ def _settle(
     elif not rental and order.status != "awaiting_payment":
         problem = "The order no longer accepts payment"
     if problem:
-        try:
-            gateway.refund(payment.provider_invoice_id)
-        except MonobankError as error:
-            # Stay pending: the next synchronisation retries the refund.
-            payment.failure_reason = f"{problem}; refund failed: {error}"
-            logger.error("Refund failed for payment %s", payment.id)
-            return
-        payment.status = "refunded"
+        payment.status = "refund_pending"
+        payment.refund_reference = payment.refund_reference or uuid4().hex
         payment.failure_reason = problem
-        record(db, None, "payment_refunded", "invoice", invoice.id, problem)
+        record(db, None, "refund_requested", "invoice", invoice.id, problem)
         return
     payment.status = "succeeded"
     invoice.status = "paid"
     invoice.paid_at = paid_at
     if rental:
-        if rental.status == "suspension_pending":
-            # Paid before expiry, confirmed after the expiry scan ran.
+        rental.expires_at += timedelta(days=RENEWAL_DAYS)
+        if rental.expires_at > now():
             rental.status = "active"
             order.status = "active"
-        rental.expires_at += timedelta(days=RENEWAL_DAYS)
+        else:
+            rental.status = "suspension_pending"
+            order.status = "expired"
         if payment.save_card and payment.card_id:
             rental.auto_renew_card_id = payment.card_id
         record(
@@ -187,6 +188,29 @@ def apply_state(
     """Apply a Monobank invoice state to a locked payment exactly once."""
     payment, invoice, order, rental = locked
     if (
+        state.amount != payment.charge_amount
+        or not payment.charge_currency
+        or state.ccy != currency_code(payment.charge_currency)
+        or (
+            payment.provider_invoice_id
+            and state.invoice_id != payment.provider_invoice_id
+        )
+        or (
+            payment.reference
+            and state.reference
+            and payment.reference != state.reference
+        )
+        or (
+            not payment.provider_invoice_id
+            and state.reference != payment.reference
+        )
+        or (
+            state.status == "success"
+            and state.final_amount not in {None, payment.charge_amount}
+        )
+    ):
+        raise HTTPException(409, "Payment does not match this invoice")
+    if (
         payment.provider_modified_at
         and state.modified_at
         and state.modified_at < payment.provider_modified_at
@@ -195,15 +219,49 @@ def apply_state(
     payment.updated_at = now()
     if state.modified_at:
         payment.provider_modified_at = state.modified_at
+    payment.provider_invoice_id = state.invoice_id
+    if payment.status == "refund_pending":
+        refund = next(
+            (
+                item
+                for item in reversed(state.refunds)
+                if item.get("extRef") == payment.refund_reference
+            ),
+            None,
+        )
+        if state.status == "reversed" or (
+            refund
+            and refund.get("status") == "success"
+            and refund.get("amount") == payment.charge_amount
+            and refund.get("ccy") == currency_code(payment.charge_currency)
+        ):
+            payment.status = "refunded"
+            payment.review_required = False
+            record(
+                db,
+                None,
+                "payment_refunded",
+                "invoice",
+                invoice.id,
+                "Full refund confirmed by Monobank",
+            )
+        elif refund and refund.get("status") == "failure":
+            payment.review_required = True
+            payment.failure_reason = "Refund failed; manual review required"
+        db.flush()
+        return payment
     if state.card_token and payment.save_card and not payment.card_id:
         card = remember_card(
             db, payment.customer_id, state.card_token, state.masked_pan
         )
         payment.card_id = card.id
-    if payment.status == "pending":
+    if payment.status in {"pending", "uncertain", "reserved", "failed"}:
         if state.status in PENDING:
-            pass
+            if payment.status != "failed":
+                payment.status = "pending"
+                payment.review_required = False
         elif state.status == "success":
+            payment.review_required = False
             _settle(
                 db,
                 gateway,
@@ -226,6 +284,7 @@ def apply_state(
             )
     elif payment.status == "succeeded" and state.status == "reversed":
         payment.status = "refunded"
+        payment.review_required = True
         payment.failure_reason = "Reversed by Monobank"
         record(db, None, "payment_reversed", "invoice", invoice.id, "Reversed")
     db.flush()
@@ -235,19 +294,29 @@ def apply_state(
 def sync_payment(db: Session, gateway: Monobank, payment_id: int) -> Payment:
     locked = lock_payment(db, payment_id)
     payment = locked[0]
-    if payment.status != "pending" or not payment.provider_invoice_id:
+    if (
+        payment.status not in {"pending", "uncertain", "refund_pending"}
+        or not payment.provider_invoice_id
+    ):
         return payment
     state = gateway.invoice_status(payment.provider_invoice_id)
     return apply_state(db, gateway, locked, state)
 
 
 def handle_webhook(db: Session, gateway: Monobank, data: dict) -> None:
-    state = Monobank.parse_state(data)
+    try:
+        state = Monobank.parse_state(data)
+    except MonobankError as error:
+        raise HTTPException(400, "Invalid payment notification") from error
     payment_id = db.scalar(
         select(Payment.id).where(
             Payment.provider_invoice_id == state.invoice_id
         )
     )
+    if payment_id is None and state.reference:
+        payment_id = db.scalar(
+            select(Payment.id).where(Payment.reference == state.reference)
+        )
     if payment_id is None:
         logger.warning("Webhook for unknown invoice %s", state.invoice_id)
         return
@@ -277,6 +346,8 @@ def start_payment(
         return successful_payment(db, invoice)
     current = pending_payment(db, invoice)
     if current:
+        if current.status != "pending":
+            return current
         if current.initiated_by == "auto":
             raise HTTPException(
                 409, "An automatic renewal payment is being processed"
@@ -313,12 +384,13 @@ def start_payment(
         validity = min(validity, remaining)
     elif order.status != "awaiting_payment":
         raise HTTPException(409, "This order cannot accept an initial payment")
+    reference = uuid4().hex
     try:
         # Monobank charges the invoice currency directly (EUR, ccy 978).
         state = gateway.create_invoice(
             amount=invoice.amount_cents,
             currency=invoice.currency,
-            reference=f"INV-{invoice.id:04d}-{data.idempotency_key[:12]}",
+            reference=reference,
             destination=destination(invoice, order),
             redirect_url=f"{settings.public_url}/#invoice/{invoice.id}",
             webhook_url=settings.webhook_url,
@@ -337,6 +409,9 @@ def start_payment(
         provider_invoice_id=state.invoice_id,
         page_url=state.page_url,
         save_card=data.save_card,
+        reference=reference,
+        charge_amount=invoice.amount_cents,
+        charge_currency=invoice.currency,
     )
     db.add(payment)
     db.flush()
@@ -469,8 +544,10 @@ def due_auto_renewals(db: Session) -> list[int]:
 
 
 def auto_renew(db: Session, gateway: Monobank, rental_id: int) -> str:
-    """Charge the saved card for one due rental. Returns what happened."""
+    """Reserve one attempt; commit it before dispatching a bank charge."""
     snapshot = db.get(Rental, rental_id)
+    if not snapshot:
+        return "not_due"
     order = _lock(db, Order, snapshot.order_id, skip_locked=True)
     if not order:
         return "busy"
@@ -483,7 +560,7 @@ def auto_renew(db: Session, gateway: Monobank, rental_id: int) -> str:
     ):
         return "not_due"
     card = db.get(PaymentCard, rental.auto_renew_card_id)
-    if card.removed_at:
+    if not card or card.removed_at or card.customer_id != order.customer_id:
         rental.auto_renew_card_id = None
         return "card_removed"
     invoice = _lock(db, Invoice, renewal_invoice_for(db, rental, order).id)
@@ -492,8 +569,7 @@ def auto_renew(db: Session, gateway: Monobank, rental_id: int) -> str:
     last = db.scalar(
         select(Payment)
         .where(
-            Payment.invoice_id == invoice.id,
-            Payment.initiated_by == "auto",
+            Payment.invoice_id == invoice.id, Payment.initiated_by == "auto"
         )
         .order_by(Payment.id.desc())
         .limit(1)
@@ -501,46 +577,154 @@ def auto_renew(db: Session, gateway: Monobank, rental_id: int) -> str:
     retry = timedelta(hours=get_settings().auto_renew_retry_hours)
     if last and last.created_at > now() - retry:
         return "waiting_retry"
-    payment = Payment(
-        invoice_id=invoice.id,
-        customer_id=order.customer_id,
-        idempotency_key=f"auto-{uuid4().hex}",
-        status="pending",
-        provider="monobank",
-        initiated_by="auto",
-        card_id=card.id,
+    db.add(
+        Payment(
+            invoice_id=invoice.id,
+            customer_id=order.customer_id,
+            idempotency_key=f"auto-{uuid4().hex}",
+            reference=uuid4().hex,
+            status="reserved",
+            provider="monobank",
+            initiated_by="auto",
+            card_id=card.id,
+            charge_amount=invoice.amount_cents,
+            charge_currency=invoice.currency,
+        )
     )
-    try:
-        state = gateway.charge_card(
-            card_token=decrypt_password(card.token_ciphertext),
-            amount=invoice.amount_cents,
-            currency=invoice.currency,
-            reference=f"INV-{invoice.id:04d}-{payment.idempotency_key[5:17]}",
-            destination=destination(invoice, order),
-            webhook_url=get_settings().webhook_url,
-        )
-    except MonobankError as error:
-        payment.status = "failed"
-        payment.failure_reason = str(error)
-        db.add(payment)
-        db.flush()
-        record(
-            db, None, "auto_renewal_failed", "invoice", invoice.id, str(error)
-        )
-        return "failed"
-    payment.provider_invoice_id = state.invoice_id
-    db.add(payment)
     db.flush()
-    record(
-        db,
-        None,
-        "auto_renewal_charged",
-        "rental",
-        rental.id,
-        f"{amount_label(invoice)} from {card.masked_pan}",
-    )
-    apply_state(db, gateway, (payment, invoice, order, rental), state)
-    return payment.status
+    return "reserved"
+
+
+def dispatch_charge(engine, gateway: Monobank, payment_id: int) -> None:
+    """Commit an uncertain marker before the one permitted network attempt."""
+    with Session(engine) as db, db.begin():
+        payment, invoice, order, rental = lock_payment(db, payment_id)
+        if payment.status != "reserved":
+            return
+        card = db.get(PaymentCard, payment.card_id)
+        if (
+            not rental
+            or rental.status != "active"
+            or rental.expires_at <= now()
+            or rental.auto_renew_card_id != payment.card_id
+            or not card
+            or card.removed_at
+            or card.customer_id != payment.customer_id
+        ):
+            payment.status = "failed"
+            payment.failure_reason = "Automatic renewal was disabled"
+            return
+        arguments = {
+            "card_token": decrypt_password(card.token_ciphertext),
+            "amount": payment.charge_amount,
+            "currency": payment.charge_currency,
+            "reference": payment.reference,
+            "destination": destination(invoice, order),
+            "webhook_url": get_settings().webhook_url,
+        }
+        payment.status = "uncertain"
+        payment.updated_at = now()
+        payment.review_required = True
+        payment.failure_reason = "Awaiting bank confirmation; do not retry"
+        record(
+            db,
+            None,
+            "auto_renewal_dispatched",
+            "invoice",
+            invoice.id,
+            "Durable attempt reserved before contacting Monobank",
+        )
+    try:
+        state = gateway.charge_card(**arguments)
+    except MonobankError as error:
+        with Session(engine) as db, db.begin():
+            payment, invoice, _, _ = lock_payment(db, payment_id)
+            if payment.status != "uncertain":
+                return
+            payment.failure_reason = str(error)
+            payment.review_required = error.uncertain
+            if not error.uncertain:
+                payment.status = "failed"
+            action = (
+                "payment_confirmation_unknown"
+                if error.uncertain
+                else "auto_renewal_failed"
+            )
+            record(db, None, action, "invoice", invoice.id, str(error))
+        return
+    with Session(engine) as db, db.begin():
+        locked = lock_payment(db, payment_id)
+        payment, invoice, _, _ = locked
+        if payment.status not in {"uncertain", "pending"}:
+            return
+        payment.provider_invoice_id = state.invoice_id
+        apply_state(db, gateway, locked, state)
+        record(
+            db,
+            None,
+            "auto_renewal_charged",
+            "invoice",
+            invoice.id,
+            "Monobank acknowledged the saved-card payment",
+        )
+
+
+def dispatch_refund(engine, gateway: Monobank, payment_id: int) -> None:
+    """Dispatch a durable refund once and reconcile ambiguous results."""
+    with Session(engine) as db, db.begin():
+        payment, _, _, _ = lock_payment(db, payment_id)
+        if payment.status != "refund_pending" or payment.refund_started_at:
+            return
+        payment.refund_started_at = now()
+        identifier = payment.provider_invoice_id
+        reference = payment.refund_reference
+    try:
+        status = gateway.refund(identifier, reference)
+    except MonobankError as error:
+        with Session(engine) as db, db.begin():
+            payment, invoice, _, _ = lock_payment(db, payment_id)
+            if payment.status == "refund_pending":
+                payment.review_required = True
+                payment.failure_reason = (
+                    "Refund confirmation unavailable; manual review required"
+                )
+                record(
+                    db,
+                    None,
+                    "refund_review",
+                    "invoice",
+                    invoice.id,
+                    str(error),
+                )
+        return
+    with Session(engine) as db, db.begin():
+        payment, invoice, _, _ = lock_payment(db, payment_id)
+        if payment.status != "refund_pending":
+            return
+        payment.updated_at = now()
+        if status == "success":
+            payment.status = "refunded"
+            payment.review_required = False
+            record(
+                db,
+                None,
+                "payment_refunded",
+                "invoice",
+                invoice.id,
+                "Full refund confirmed by Monobank",
+            )
+        elif status == "failure":
+            payment.review_required = True
+            payment.failure_reason = "Refund failed; manual review required"
+        else:
+            record(
+                db,
+                None,
+                "refund_processing",
+                "invoice",
+                invoice.id,
+                "Monobank accepted the refund; awaiting completion",
+            )
 
 
 def stale_pending_payments(db: Session, older_than: int = 15) -> list[int]:
@@ -548,7 +732,7 @@ def stale_pending_payments(db: Session, older_than: int = 15) -> list[int]:
         db.scalars(
             select(Payment.id)
             .where(
-                Payment.status == "pending",
+                Payment.status.in_({"pending", "uncertain", "refund_pending"}),
                 Payment.provider_invoice_id.is_not(None),
                 Payment.updated_at < now() - timedelta(seconds=older_than),
             )
@@ -559,11 +743,7 @@ def stale_pending_payments(db: Session, older_than: int = 15) -> list[int]:
 
 
 def run_billing_cycle(engine, gateway: Monobank) -> None:
-    """Poll pending payments and charge due auto-renewals.
-
-    Webhooks make polling mostly redundant in production; locally
-    (no https PUBLIC_URL) polling is the only status source.
-    """
+    """Reconcile, reserve attempts, then dispatch committed outbox rows."""
     with Session(engine, expire_on_commit=False) as db:
         with db.begin():
             payments = stale_pending_payments(db)
@@ -582,4 +762,30 @@ def run_billing_cycle(engine, gateway: Monobank) -> None:
                 with db.begin():
                     auto_renew(db, gateway, rental_id)
             except Exception:
-                logger.exception("Auto-renewal of rental %s failed", rental_id)
+                logger.exception("Auto-renewal reservation failed")
+        with db.begin():
+            queued = list(
+                db.execute(
+                    select(Payment.id, Payment.status).where(
+                        Payment.status == "reserved",
+                    )
+                ).all()
+            )
+            refunds = list(
+                db.scalars(
+                    select(Payment.id).where(
+                        Payment.status == "refund_pending",
+                        Payment.refund_started_at.is_(None),
+                    )
+                )
+            )
+    for payment_id, _ in queued:
+        try:
+            dispatch_charge(engine, gateway, payment_id)
+        except Exception:
+            logger.exception("Payment %s dispatch failed", payment_id)
+    for payment_id in refunds:
+        try:
+            dispatch_refund(engine, gateway, payment_id)
+        except Exception:
+            logger.exception("Payment %s refund dispatch failed", payment_id)

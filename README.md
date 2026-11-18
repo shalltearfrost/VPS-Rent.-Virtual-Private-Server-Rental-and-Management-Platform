@@ -70,6 +70,9 @@ performing them at the provider when using real infrastructure.
 
 Payments use the Monobank acquiring API. Invoices are in euro and Monobank
 charges them in euro directly (`ccy` 978), without currency conversion.
+The gateway verifies a test merchant and rejects live tokens. See
+[payment reliability](docs/payment-reliability.md) for durable attempts,
+uncertain charge recovery and asynchronous refund confirmation.
 
 1. Get a test token at https://api.monobank.ua/ (no real money is charged; any
    card number that passes the Luhn check works on the payment page).

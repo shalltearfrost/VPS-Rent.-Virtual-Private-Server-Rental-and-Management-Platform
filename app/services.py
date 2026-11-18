@@ -130,6 +130,12 @@ def allocate(
     order = owned_order(db, order_id, operator, lock=True)
     if order.status != "awaiting_allocation":
         raise HTTPException(409, "Only paid queued orders can be allocated")
+    if db.scalar(
+        select(Payment.id)
+        .join(Invoice)
+        .where(Invoice.order_id == order.id, Payment.review_required.is_(True))
+    ):
+        raise HTTPException(409, "Payment needs review before allocation")
     server = db.scalar(
         select(Server).where(Server.id == server_id).with_for_update()
     )
