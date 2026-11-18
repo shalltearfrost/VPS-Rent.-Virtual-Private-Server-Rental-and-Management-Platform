@@ -19,7 +19,7 @@ database. Monetary amounts use integer euro cents. All timestamps use
 | servers | id PK, name unique, address INET unique, cpu/ram_gb/disk_gb positive, ssh_user, password_ciphertext, state CHECK available/assigned/suspended/preparing, created_at |
 | rentals | id PK, order_id unique FK, server_id FK, started_at, expires_at > started_at, status CHECK active/suspension_pending/suspended/ended, power CHECK running/stopped, auto_renew_card_id optional FK payment_cards (NULL = automatic renewal off); at most one non-ended rental per server |
 | operation_requests | id PK, rental_id FK, requested_by FK users, kind CHECK start/stop/restart, status CHECK pending/completed/rejected, result optional, resolved_by optional FK users, created_at, resolved_at optional; one pending operation per rental; completed/rejected requests require a resolver, result and resolution time |
-| tickets | id PK, customer_id FK, rental_id optional FK, subject, status CHECK open/in_progress/closed, created_at |
+| tickets | id PK, customer_id FK, rental_id optional FK, subject, status CHECK open/in_progress/closed, created_at, last_message_at and awaiting_support (true when the customer wrote last), both kept in step with ticket_messages so lists sort through an index |
 | ticket_messages | id PK, ticket_id FK, author_id FK users, body, created_at |
 | activity | id PK, actor_id optional FK users (NULL means system), action, entity_type, entity_id, result, created_at; append-only through application API |
 
@@ -57,10 +57,18 @@ a role at registration. Plan edits never change an existing order or its renewal
 price. An order's monthly renewal price is also snapshotted separately as
 `renewal_cents`. Public plan visibility is controlled by `enabled`.
 
-Indexes: all foreign keys used in lists; orders(customer_id, created_at),
-orders(status, created_at), rentals(status, expires_at), tickets(status,
-created_at), messages(ticket_id, created_at), activity(created_at), sessions
-(expires_at), servers(state, cpu, ram_gb, disk_gb). Unique partial indexes:
+Indexes: all foreign keys used in lists, except where a composite index
+already starts with the column; orders(customer_id, created_at),
+orders(status, created_at), rentals(status, expires_at), sessions(expires_at),
+servers(state, cpu, ram_gb, disk_gb). Paged lists sort by (time, id) and have
+a matching index, read backwards for newest-first lists:
+tickets(customer_id, last_message_at, id), tickets(status, last_message_at,
+id), tickets(last_message_at, id), tickets(last_message_at, id) WHERE
+awaiting_support AND status != closed, ticket_messages(ticket_id, created_at,
+id), activity(created_at, id), activity(entity_type, created_at, id),
+activity(entity_type, action, created_at, id), operation_requests(created_at,
+id) WHERE status = pending, operation_requests(resolved_at, id) WHERE
+status != pending. Unique partial indexes:
 rentals(server_id) WHERE status != ended, operation_requests(rental_id) WHERE
 status = pending, payments(invoice_id) WHERE status = succeeded,
 payments(invoice_id) WHERE status = pending, payment_cards(token_hash) WHERE

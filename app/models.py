@@ -19,9 +19,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
-def reference(table: str):
+def reference(table: str, *, index: bool = True):
+    # index=False when a composite index already starts with this column.
     return mapped_column(
-        ForeignKey(f"{table}.id", ondelete="RESTRICT"), index=True
+        ForeignKey(f"{table}.id", ondelete="RESTRICT"), index=index
     )
 
 
@@ -104,7 +105,7 @@ class Order(Record, Timestamped, Base):
         Index("ix_orders_queue", "status", "created_at"),
     )
 
-    customer_id: Mapped[int] = reference("users")
+    customer_id: Mapped[int] = reference("users", index=False)
     plan_id: Mapped[int] = reference("plans")
     plan_name: Mapped[str] = mapped_column(String(40))
     cpu: Mapped[int] = mapped_column(Integer)
@@ -309,6 +310,18 @@ class OperationRequest(Record, Timestamped, Base):
             unique=True,
             postgresql_where=text("status = 'pending'"),
         ),
+        Index(
+            "ix_operations_pending",
+            "created_at",
+            "id",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "ix_operations_resolved",
+            "resolved_at",
+            "id",
+            postgresql_where=text("status <> 'pending'"),
+        ),
     )
 
     rental_id: Mapped[int] = reference("rentals")
@@ -329,30 +342,61 @@ class Ticket(Record, Timestamped, Base):
             "status IN ('open', 'in_progress', 'closed')",
             name="ticket_status",
         ),
-        Index("ix_tickets_queue", "status", "created_at"),
+        # Lists are sorted by latest message; B-trees also scan backwards.
+        Index(
+            "ix_tickets_customer_recent",
+            "customer_id",
+            "last_message_at",
+            "id",
+        ),
+        Index("ix_tickets_status_recent", "status", "last_message_at", "id"),
+        Index("ix_tickets_recent", "last_message_at", "id"),
+        Index(
+            "ix_tickets_awaiting",
+            "last_message_at",
+            "id",
+            postgresql_where=text("awaiting_support AND status <> 'closed'"),
+        ),
     )
 
-    customer_id: Mapped[int] = reference("users")
+    customer_id: Mapped[int] = reference("users", index=False)
     rental_id: Mapped[int | None] = reference("rentals")
     subject: Mapped[str] = mapped_column(String(160))
     status: Mapped[str] = mapped_column(String(16), default="open")
+    # Denormalized from the newest message so lists sort through an index.
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # The customer wrote last; unless closed, the ticket waits for support.
+    awaiting_support: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true")
+    )
 
 
 class TicketMessage(Record, Timestamped, Base):
     __tablename__ = "ticket_messages"
     __table_args__ = (
         CheckConstraint("length(trim(body)) > 0", name="message_body"),
-        Index("ix_messages_thread", "ticket_id", "created_at"),
+        Index("ix_messages_thread", "ticket_id", "created_at", "id"),
     )
 
-    ticket_id: Mapped[int] = reference("tickets")
+    # ix_messages_thread already starts with ticket_id.
+    ticket_id: Mapped[int] = reference("tickets", index=False)
     author_id: Mapped[int] = reference("users")
     body: Mapped[str] = mapped_column(Text)
 
 
 class Activity(Record, Timestamped, Base):
     __tablename__ = "activity"
-    __table_args__ = (Index("ix_activity_time", "created_at"),)
+    __table_args__ = (
+        # Wide filters (several entity types) walk back in time and stop
+        # after one page; narrow ones use the entity-first indexes.
+        Index("ix_activity_time", "created_at", "id"),
+        Index("ix_activity_scope", "entity_type", "created_at", "id"),
+        Index(
+            "ix_activity_action", "entity_type", "action", "created_at", "id"
+        ),
+    )
 
     actor_id: Mapped[int | None] = reference("users")
     action: Mapped[str] = mapped_column(String(64))

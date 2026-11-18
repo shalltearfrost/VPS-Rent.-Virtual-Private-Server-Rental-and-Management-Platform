@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -87,7 +87,10 @@ def test_real_product_flow(clients, inventory, db, monobank):
         json={"idempotency_key": "successful-key-01"},
     )
     assert duplicate.json()["id"] == result.json()["payment"]["id"]
-    assert operator.get("/api/operator/queue").json()[0]["id"] == order["id"]
+    assert (
+        operator.get("/api/operator/queue").json()["items"][0]["id"]
+        == order["id"]
+    )
     rental = operator.post(
         f"/api/operator/orders/{order['id']}/allocate",
         json={"server_id": server.id},
@@ -335,13 +338,15 @@ def test_support_thread_privacy_and_history(clients, active_rental):
     assert clients["operator"].get("/api/tickets").status_code == 403
     assert clients["manager"].get("/api/tickets").status_code == 403
     path = f"/api/tickets/{ticket['id']}"
-    assert support.get(path).json()["server"]["address"] == "192.0.2.1"
-    assert (
-        support.post(
-            f"{path}/messages", json={"body": "Please check your SSH port"}
-        ).status_code
-        == 201
+    details = support.get(path).json()
+    assert details["server"]["address"] == "192.0.2.1"
+    assert details["customer"] == "customer@example.com"
+    reply = support.post(
+        f"{path}/messages", json={"body": "Please check your SSH port"}
     )
+    assert reply.status_code == 201
+    # A support reply picks up an open ticket.
+    assert reply.json()["status"] == "in_progress"
     assert (
         support.post(
             f"{path}/status", json={"status": "in_progress"}
@@ -356,10 +361,95 @@ def test_support_thread_privacy_and_history(clients, active_rental):
         ).status_code
         == 409
     )
-    assert all(
-        item["entity_type"] == "ticket"
-        for item in support.get("/api/activity").json()
+    history = support.get("/api/activity").json()["items"]
+    assert all(item["entity_type"] == "ticket" for item in history)
+    assert [item["action"] for item in history] == [
+        "ticket_status",
+        "ticket_status",
+        "ticket_reply",
+        "ticket_created",
+    ]
+    assert history[2]["result"] == "Support replied"
+    assert history[0]["result"] == "closed"
+    assert (
+        customer.post(f"{path}/status", json={"status": "open"}).status_code
+        == 403
     )
+
+
+def test_activity_scopes_by_role(clients, active_rental, inventory):
+    plan = inventory[0]
+    manager = clients["manager"]
+    data = {
+        key: getattr(plan, key)
+        for key in (
+            "name",
+            "description",
+            "cpu",
+            "ram_gb",
+            "disk_gb",
+            "monthly_cents",
+            "annual_cents",
+            "enabled",
+        )
+    }
+    assert (
+        manager.put(f"/api/management/plans/{plan.id}", json=data).status_code
+        == 200
+    )
+    manager_history = manager.get("/api/activity").json()["items"]
+    assert {item["entity_type"] for item in manager_history} == {"plan"}
+    operator_types = {
+        item["entity_type"]
+        for item in clients["operator"].get("/api/activity").json()["items"]
+    }
+    assert "invoice" in operator_types
+    assert operator_types <= {
+        "order",
+        "invoice",
+        "rental",
+        "server",
+        "operation",
+    }
+    assert clients["customer"].get("/api/activity").status_code == 403
+
+
+def test_operator_views_show_customer_context(clients, paid_order, monobank):
+    customer, operator = clients["customer"], clients["operator"]
+    order, server = paid_order
+    queued = operator.get("/api/operator/queue").json()["items"]
+    assert [item["customer"] for item in queued] == ["customer@example.com"]
+    assert queued[0]["invoices"][0]["paid_at"]
+    rental = operator.post(
+        f"/api/operator/orders/{order['id']}/allocate",
+        json={"server_id": server.id},
+    ).json()
+    pooled = next(
+        item
+        for item in operator.get("/api/operator/servers").json()["items"]
+        if item["id"] == server.id
+    )
+    assert pooled["customer"] == "customer@example.com"
+    # Same instant; the database session may report another UTC offset.
+    assert datetime.fromisoformat(
+        pooled["expires_at"]
+    ) == datetime.fromisoformat(rental["expires_at"])
+    request = customer.post(
+        f"/api/rentals/{rental['id']}/operations", json={"kind": "restart"}
+    ).json()
+    pending = operator.get("/api/operator/operations").json()["items"][0]
+    assert pending["customer"] == "customer@example.com"
+    assert pending["address"] == "192.0.2.1"
+    assert pending["power"] == "running"
+    assert pending["resolved_by"] is None
+    operator.post(
+        f"/api/operator/operations/{request['id']}/resolve",
+        json={"status": "completed", "result": "Restarted at the provider."},
+    )
+    resolved = operator.get("/api/operator/operations?status=resolved").json()[
+        "items"
+    ][0]
+    assert resolved["resolved_by"] == "operator@example.com"
 
 
 def test_server_cannot_be_allocated_twice(clients, paid_order, db, monobank):
@@ -384,7 +474,7 @@ def test_server_cannot_be_allocated_twice(clients, paid_order, db, monobank):
         results = list(executor.map(assign, [first, second]))
     assert sorted(result.status_code for result in results) == [201, 409]
     assert db.scalar(select(func.count()).select_from(Rental)) == 1
-    assert len(operator.get("/api/operator/queue").json()) == 1
+    assert len(operator.get("/api/operator/queue").json()["items"]) == 1
 
 
 def test_payment_key_is_bound_to_one_invoice(clients, active_rental):
