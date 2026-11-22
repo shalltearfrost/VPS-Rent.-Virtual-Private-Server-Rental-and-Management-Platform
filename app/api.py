@@ -142,9 +142,11 @@ def register(data: Credentials, db: Db, response: Response, request: Request):
 @router.post("/auth/login")
 def login(data: Credentials, db: Db, response: Response, request: Request):
     user = db.scalar(select(User).where(User.email == str(data.email).lower()))
-    valid = password_hasher.verify(
-        data.password, user.password_hash if user else dummy_hash
-    )
+    # Google-only accounts have no password; verify against a dummy hash
+    # so the response time does not reveal that the account exists.
+    stored = user.password_hash if user and user.password_hash else None
+    valid = password_hasher.verify(data.password, stored or dummy_hash)
+    valid = valid and stored is not None
     if not user or not valid:
         raise HTTPException(401, "Email or password is incorrect")
     return begin_session(db, user, response, request)

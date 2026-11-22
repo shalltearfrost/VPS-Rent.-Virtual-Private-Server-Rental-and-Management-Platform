@@ -347,3 +347,6 @@ body { margin: 0; background: #fff; }
 /* Form whose fields share one line with the submit button. */
 #vps-rent-app .vr-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
 #vps-rent-app .vr-inline-form .vr-field { flex: 1 1 260px; }
+
+/* Google sign-in is a link: OAuth needs a full page navigation. */
+#vps-rent-app .vr-google { display: inline-flex; align-items: center; justify-content: center; justify-self: start; text-decoration: none; }

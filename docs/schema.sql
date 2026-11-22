@@ -46,14 +46,17 @@ CREATE INDEX ix_servers_available ON servers (state, cpu, ram_gb, disk_gb);
 
 CREATE TABLE users (
     email VARCHAR(254) NOT NULL,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
+    google_sub VARCHAR(255),
     role VARCHAR(16) NOT NULL,
     id BIGSERIAL NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY (id),
     CONSTRAINT user_role CHECK (role IN ('customer', 'operator', 'support', 'manager')),
     CONSTRAINT email_lowercase CHECK (email = lower(email)),
-    UNIQUE (email)
+    CONSTRAINT user_has_credential CHECK (password_hash IS NOT NULL OR google_sub IS NOT NULL),
+    UNIQUE (email),
+    UNIQUE (google_sub)
 );
 
 CREATE TABLE activity (

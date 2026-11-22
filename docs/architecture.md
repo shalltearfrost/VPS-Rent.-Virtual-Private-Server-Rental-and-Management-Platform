@@ -77,11 +77,39 @@ unauthenticated access returns 401 and forbidden staff actions return 403.
 | Activity history | No | Orders, payments, rentals, servers, operations | Ticket actions (opened, replies, status) | Plan changes |
 
 User roles come from the database, never a request field or frontend menu.
-Passwords used for sign-in are Argon2 hashes; VPS passwords use authenticated
+Passwords used for sign-in are Argon2 hashes (Google-only accounts have
+none); VPS passwords use authenticated
 Fernet encryption with an environment key. HttpOnly session tokens are hashed
 before storage, expire after 24 hours, and are removed on logout. A separate
 session-bound CSRF token is required for authenticated writes. Origin checks
 also cover unauthenticated login/registration. API responses use `no-store`.
+
+## Google sign-in flow
+
+Google sign-in uses the OAuth 2.0 authorization code flow with PKCE, run by the
+backend; the browser loads no Google scripts, so the CSP is unchanged.
+
+1. The sign-in page links to `GET /api/auth/google/start`. It creates a random
+   `state` and PKCE `code_verifier`, stores both in a 10-minute HttpOnly
+   `g_oauth` cookie limited to `/api/auth/google`, and redirects to Google with
+   `state` and the SHA-256 `code_challenge`.
+2. Google returns the browser to `GET /api/auth/google/callback?code&state`.
+   The backend compares `state` with the cookie (login CSRF protection), then
+   exchanges `code` and `code_verifier` for tokens at Google's token endpoint
+   using the client secret.
+3. The ID token came directly from Google over TLS, so its claims are checked
+   without a signature check (OpenID Connect Core 3.1.3.7): issuer, audience
+   (our client ID), expiry and `email_verified`.
+4. The account is found by `users.google_sub` (Google's stable ID), otherwise
+   linked by email, otherwise created as a customer with no password. An email
+   already linked to another Google identity is refused.
+5. The usual session (`begin_session`) is created and the browser is redirected
+   to `/#home`; the frontend then loads it through `/api/auth/me`. Any failure
+   redirects to `/#login/google-failed`, where the page shows an error.
+
+Google HTTP calls and token checks live in `app/googleAuth/auth.py`; the
+endpoints are in `app/api.py`. Accounts without a password always fail
+password sign-in, with the same timing as a wrong password.
 
 ## Review questions each member should answer
 

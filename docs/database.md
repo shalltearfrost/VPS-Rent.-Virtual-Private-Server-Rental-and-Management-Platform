@@ -9,7 +9,7 @@ database. Monetary amounts use integer euro cents. All timestamps use
 
 | Entity | Attributes and constraints |
 | --- | --- |
-| users | id PK, email unique/not null/lowercase, password_hash, role CHECK customer/operator/support/manager, created_at |
+| users | id PK, email unique/not null/lowercase, password_hash optional (NULL for Google-only accounts), google_sub optional unique (Google account id), at least one of password_hash/google_sub present, role CHECK customer/operator/support/manager, created_at |
 | sessions | id PK, user_id FK, token_hash unique, csrf_token, expires_at |
 | plans | id PK, name unique, description, cpu/ram_gb/disk_gb positive, monthly_cents/annual_cents positive, enabled, created_at |
 | orders | id PK, customer_id FK users, plan_id FK plans, immutable plan_name/cpu/ram_gb/disk_gb/price_cents snapshots, term CHECK monthly/annual, status CHECK awaiting_payment/awaiting_allocation/active/expired, created_at |

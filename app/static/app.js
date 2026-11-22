@@ -542,7 +542,8 @@
       ${field('Email', 'email', 'email', '', 'required autocomplete="username"')}
       ${field('Password', 'password', 'password', '', `required minlength="12" maxlength="128" autocomplete="${register ? 'new-password' : 'current-password'}"`)}
       <div class="vr-actions"><button class="vr-button vr-primary">${register ? 'Create account' : 'Sign in'}</button>${button(register ? 'Sign in' : 'Create account', `data-page="${register ? 'login' : 'register'}"`)}</div>
-    </form>`);
+    </form>
+    <a class="vr-button vr-google" href="/api/auth/google/start">Continue with Google</a>`);
   }
 
   function ticketRow(ticket) {
@@ -876,6 +877,8 @@
         state.user = session.user; state.csrf = session.csrf_token;
       } catch (error) { if (error.status !== 401) throw error; }
       await refresh();
+      // The Google callback redirects here when sign-in did not complete.
+      if (location.hash === '#login/google-failed') notice('Google sign-in failed. Try again or sign in with your password.', true);
     } catch (error) {
       main.innerHTML = heading('Unable to load VPS Rent');
       notice(error.message, true);

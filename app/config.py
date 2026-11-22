@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     auto_renew_days_before: int = Field(default=3, ge=1, le=25)
     auto_renew_retry_hours: int = Field(default=12, ge=1, le=72)
 
+    # Google OAuth2.0 client credentials. An empty client ID disables Google login.
+    google_client_id: str = ""
+    google_client_secret: SecretStr = SecretStr("")
+    @property
+    def google_redirect_uri(self) -> str | None:
+        if not self.google_client_id:
+            return None
+        return f"{self.public_url}/api/auth/google/callback"
+
     @field_validator("public_url")
     @classmethod
     def clean_public_url(cls, value: str) -> str:

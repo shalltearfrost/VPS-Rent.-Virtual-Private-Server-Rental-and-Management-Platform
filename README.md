@@ -66,6 +66,30 @@ suspension and preparation are recorded manual workflows: this version does not
 call a provider API or perform actual host commands. Confirm actions only after
 performing them at the provider when using real infrastructure.
 
+## Google sign-in
+
+Customers can sign in with Google next to the email/password form. Without
+Google credentials the rest of the app works and the Google button returns 404.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   configure the OAuth consent screen (External; while it is in Testing, add
+   your Google accounts as test users).
+2. Create an **OAuth client ID** of type **Web application** and add the
+   authorized redirect URI `{PUBLIC_URL}/api/auth/google/callback`, locally
+   `http://127.0.0.1:8000/api/auth/google/callback`. It must match `PUBLIC_URL`
+   exactly: `localhost` and `127.0.0.1` are different addresses, and open the
+   app at the same address so the cookies match.
+3. Put the client values in `.env` and restart the application:
+
+   ```
+   GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=...
+   ```
+
+A first Google sign-in creates a customer account without a password. If an
+account with the same verified email already exists, Google is linked to it and
+both sign-in methods work. Staff roles are still assigned only in the database.
+
 ## Load-test data
 
 `scripts/load_data.py` fills the database with about 480,000 related rows

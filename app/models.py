@@ -44,10 +44,18 @@ class User(Record, Timestamped, Base):
             name="user_role",
         ),
         CheckConstraint("email = lower(email)", name="email_lowercase"),
+        # Every account must have at least one way to sign in.
+        CheckConstraint(
+            "password_hash IS NOT NULL OR google_sub IS NOT NULL",
+            name="user_has_credential",
+        ),
     )
 
     email: Mapped[str] = mapped_column(String(254), unique=True)
-    password_hash: Mapped[str] = mapped_column(Text)
+    # NULL for accounts created through Google sign-in.
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    # Google's stable account id ("sub" claim); NULL until linked.
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
     role: Mapped[str] = mapped_column(String(16), default="customer")
 
 

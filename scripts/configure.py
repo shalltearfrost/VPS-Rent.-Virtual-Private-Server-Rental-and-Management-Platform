@@ -21,7 +21,10 @@ def main() -> None:
         "# Monobank acquiring token (test token: https://api.monobank.ua/)\n"
         "MONOBANK_TOKEN=\n"
         "# Public address of the app; https enables Monobank webhooks\n"
-        "PUBLIC_URL=http://127.0.0.1:8000\n",
+        "PUBLIC_URL=http://127.0.0.1:8000\n"
+        "# Google sign-in OAuth client (empty disables Google sign-in)\n"
+        "GOOGLE_CLIENT_ID=\n"
+        "GOOGLE_CLIENT_SECRET=\n",
         encoding="utf-8",
     )
     print("Created .env with random local credentials.")
