@@ -15,6 +15,7 @@ from app.billing.routes import router as billing_router
 from app.billing.service import run_billing_cycle
 from app.config import get_settings
 from app.database import get_engine
+from app.googleAuth.routes import router as google_router
 from app.services import flag_expired
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="VPS Rent", version="0.3.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(billing_router)
+app.include_router(google_router)
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
 

@@ -8,7 +8,8 @@
   const state = {
     user: null, csrf: '', plans: [], orders: [], rentals: [], tickets: [],
     queue: [], pool: [], operations: [], activity: [], managedPlans: [],
-    cards: [], invoice: null, saveCard: false,
+    cards: [], invoice: null, saveCard: false, counts: {}, ticket: null,
+    server: null, filters: {},
     selectedPlan: null, term: 'monthly', openOrders: new Set(), loading: false,
   };
   let invoiceTimer = null;
@@ -19,7 +20,7 @@
     operator: [['queue', 'Allocation'], ['pool', 'Server pool'],
       ['operations', 'Operations'], ['history', 'History']],
     support: [['tickets', 'Tickets'], ['history', 'History']],
-    manager: [['manage', 'Rental plans']],
+    manager: [['manage', 'Rental plans'], ['history', 'History']],
   };
   const labels = {
     awaiting_payment: 'Awaiting Payment',
@@ -32,6 +33,7 @@
     open: 'Open', closed: 'Closed', failed: 'Failed', preparing: 'Preparing',
     succeeded: 'Succeeded', refunded: 'Refunded', disabled: 'Disabled',
     reserved: 'Queued', uncertain: 'Needs review', refund_pending: 'Refund pending',
+    start: 'Start', stop: 'Stop', restart: 'Restart',
   };
   const tones = {
     paid: 'good', active: 'good', running: 'good', completed: 'good',
@@ -39,6 +41,35 @@
     failed: 'bad', expired: 'bad', stopped: 'bad',
     rejected: 'bad', awaiting_payment: 'warn', awaiting_allocation: 'warn',
     pending: 'warn', suspension_pending: 'warn', suspended: 'warn',
+    open: 'warn', in_progress: 'info',
+  };
+  const ticketStatuses = ['open', 'in_progress', 'closed'];
+  const activityActions = {
+    ticket_created: 'Ticket opened', ticket_status: 'Status changed',
+    ticket_reply: 'Reply added', order_created: 'Order placed',
+    allocated: 'Server allocated', operation_requested: 'Operation requested',
+    operation_resolved: 'Operation resolved', password_viewed: 'Password viewed',
+    rental_expired: 'Rental expired', suspended: 'Access suspended',
+    prepared: 'Server prepared', server_added: 'Server added',
+    plan_created: 'Plan created', plan_updated: 'Plan updated',
+    payment_started: 'Payment started', payment_succeeded: 'Payment received',
+    payment_failed: 'Payment failed', payment_refunded: 'Payment refunded',
+    payment_reversed: 'Payment reversed', renewal_invoice: 'Renewal invoice created',
+    rental_renewed: 'Rental renewed', auto_renew: 'Automatic renewal changed',
+    auto_renewal_charged: 'Automatic renewal charged',
+    auto_renewal_failed: 'Automatic renewal failed',
+  };
+  // History filters: support filters by action, other staff by entity type.
+  const activityFilters = {
+    // A value matches the action/entity type, or `action:result` for one outcome.
+    support: [['all', 'All'], ['ticket_created', 'Opened'], ['ticket_reply', 'Replies'],
+      ['ticket_status:in_progress', 'In Progress'], ['ticket_status:closed', 'Closed'], ['ticket_status:open', 'Reopened']],
+    operator: [['all', 'All'], ['order', 'Orders'], ['invoice', 'Payments'], ['rental', 'Rentals'], ['server', 'Servers'], ['operation', 'Operations']],
+    manager: [['all', 'All'], ['plan', 'Plans']],
+  };
+  const entityPages = {
+    ticket: 'ticket', order: 'queue', rental: 'pool', server: 'pool',
+    operation: 'operations', plan: 'edit-plan',
   };
   const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -49,6 +80,10 @@
   const date = value => new Intl.DateTimeFormat('en-GB', {
     day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
   }).format(new Date(value));
+  const time = value => new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
+  }).format(new Date(value));
+  const stamp = value => `${date(value)}, ${time(value)}`;
   const duration = term => term === 'annual' ? '12 months' : '30 days';
   const badge = status => `<span class="vr-badge vr-${tones[status] || 'neutral'}">${safe(labels[status] || status)}</span>`;
   const button = (label, attrs = '', primary = false) =>
@@ -58,18 +93,71 @@
   const empty = (text, page = '', label = '') => panel(`<h2>${safe(text)}</h2>${page ? button(label, `data-page="${page}"`, true) : ''}`);
   const resources = plan => `${plan.cpu} vCPU · ${plan.ram_gb} GB RAM · ${plan.disk_gb} GB SSD`;
   const invoiceFor = order => order.invoices.find(item => item.kind === 'initial');
+  const back = (page, label) => `<button type="button" class="vr-server-back" data-page="${page}">← ${safe(label)}</button>`;
+  const facts = items => `<dl class="vr-server-facts">${items.map(([term, value]) => `<div><dt>${safe(term)}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
+  // In-page filter built from the workspace menu style: [[value, label, count?]].
+  const filterNav = (name, options, current) => `<nav class="vr-nav vr-filter" aria-label="${safe(name)}">${options.map(([value, label, count]) => `<button type="button" data-filter="${value}" ${value === current ? 'aria-current="true"' : ''}>${safe(label)}${count === undefined ? '' : `<span class="vr-count">${count}</span>`}</button>`).join('')}</nav>`;
+  // The other side wrote last, so the ticket is waiting for the viewer.
+  const awaitingViewer = ticket => ticket.status !== 'closed'
+    && ticket.awaiting_support === (state.user.role === 'support');
+  // Staff messages are always "Support": another agent may have written them.
+  const author = name => name === 'support' ? 'Support'
+    : state.user.role === 'customer' ? 'You' : 'Customer';
+  const hour = 3600000;
+  // "12 min", "3 h 5 min", "1 d 7 h" since a timestamp.
+  const since = value => {
+    const minutes = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 60000));
+    const [days, hours, mins] = [Math.floor(minutes / 1440), Math.floor(minutes / 60) % 24, minutes % 60];
+    return days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : `${mins} min`;
+  };
+  const paidAt = order => invoiceFor(order).paid_at;
+  // Filters are applied by the API and remembered per page.
+  const defaultFilter = page => ({
+    operations: 'pending', tickets: state.user?.role === 'support' ? 'awaiting' : 'all',
+  })[page] || 'all';
+  const filterFor = page => state.filters[page] ?? defaultFilter(page);
+  // Paged lists: state[key] holds the rows shown, lists[key] where to continue.
+  const pageSize = 50;
+  const lists = {};
+  const moreButton = key => lists[key]?.cursor
+    ? `<div class="vr-actions">${button('Show more', `data-action="more" data-list="${key}"`)}</div>` : '';
+  const resultHints = {
+    start: 'Started at the provider.', stop: 'Stopped at the provider.',
+    restart: 'Restarted at the provider.',
+  };
+  // Day-grouped cards of log rows, used by history and resolved operations.
+  const dayGroups = (items, key, row, noun) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const days = new Map();
+    for (const item of items) {
+      const day = new Date(item[key]).toISOString().slice(0, 10);
+      days.set(day, [...(days.get(day) || []), item]);
+    }
+    return `<div class="vr-log">${[...days].map(([day, list]) => `<section class="vr-server-panel" aria-label="${date(day)}">
+      <div class="vr-server-toolbar"><h2>${day === today ? `Today · ${date(day)}` : date(day)}</h2><span class="vr-small">${list.length} ${noun}${list.length === 1 ? '' : 's'}</span></div>
+      ${list.map(row).join('')}
+    </section>`).join('')}</div>`;
+  };
   const activeRental = rental => rental.status === 'active'
     && new Date(rental.expires_at) > new Date();
 
+  // "Home" (no hash, or #home) is the role's first menu page, so loading,
+  // filters, polling and rendering all agree on which page is shown.
   function route() {
-    const [page, id = ''] = location.hash.slice(1).split('/');
-    return { page: page || 'home', id: Number(id) };
+    const [hash, id = ''] = location.hash.slice(1).split('/');
+    const page = hash && hash !== 'home' ? hash : menus[state.user?.role || 'visitor'][0][0];
+    return { page, id: Number(id) };
   }
 
-  function go(page, id = '') {
+  // Navigate and load what the new page shows. location.hash updates at
+  // once, so refresh() already sees the new route; the later hashchange event
+  // for this hash is ignored (it would reload twice and clear a new notice).
+  let routed = '';
+  async function go(page, id = '') {
     const hash = `${page}${id ? `/${id}` : ''}`;
-    if (location.hash === `#${hash}`) render();
-    else location.hash = hash;
+    notice('');
+    if (location.hash !== `#${hash}`) { routed = `#${hash}`; location.hash = hash; }
+    await refresh();
   }
 
   function notice(message, error = false) {
@@ -98,29 +186,50 @@
     return result;
   }
 
+  async function loadList(key, path, more = false) {
+    const known = lists[key]?.path === path;
+    const target = more || !known ? pageSize : Math.max(pageSize, state[key].length);
+    const items = [];
+    let cursor = more && known ? lists[key].cursor : null;
+    do {
+      const query = new URLSearchParams({limit: Math.min(200, target - items.length)});
+      if (cursor) query.set('cursor', cursor);
+      const page = await api(`${path}${path.includes('?') ? '&' : '?'}${query}`);
+      items.push(...page.items);
+      cursor = page.next_cursor;
+    } while (cursor && items.length < target);
+    lists[key] = {path, cursor};
+    return more ? [...state[key], ...items] : items;
+  }
+
   async function refresh() {
     const paths = { plans: '/plans' };
+    const paged = {};
     const role = state.user?.role;
-    if (role === 'customer') Object.assign(paths, {
-      orders: '/orders', rentals: '/rentals', tickets: '/tickets',
-      cards: '/cards',
-    });
     const { page, id } = route();
-    if (role === 'customer' && page === 'invoice' && id) {
-      // Reconciliation can extend a rental; read rentals after it commits.
-      state.invoice = await api(`/invoices/${id}`);
+    const filter = encodeURIComponent(filterFor(page));
+    if (role === 'customer') {
+      Object.assign(paths, { orders: '/orders', rentals: '/rentals', cards: '/cards' });
+      if (page === 'invoice' && id) state.invoice = await api(`/invoices/${id}`);
+      if (page === 'tickets') paged.tickets = '/tickets';
     }
-    if (role === 'operator') Object.assign(paths, {
-      queue: '/operator/queue', pool: '/operator/servers',
-      operations: '/operator/operations', activity: '/activity',
-    });
-    if (role === 'support') Object.assign(paths, {
-      tickets: '/tickets', activity: '/activity',
-    });
+    if (role === 'support' && page === 'tickets') paged.tickets = `/tickets?status=${filter}`;
+    if ((role === 'customer' || role === 'support') && page === 'ticket' && id) paths.ticket = `/tickets/${id}`;
+    if (role === 'operator') {
+      if (page === 'queue' || page === 'add-server') paged.queue = '/operator/queue';
+      if (page === 'pool') paged.pool = `/operator/servers?filter=${filter}`;
+      if (page === 'prepare' && id) paths.server = `/operator/servers/${id}`;
+      if (page === 'operations') paged.operations = `/operator/operations?status=${filter}`;
+    }
+    if (role === 'support' || role === 'operator') paths.counts = '/counts';
     if (role === 'manager') paths.managedPlans = '/management/plans';
-    const entries = await Promise.all(Object.entries(paths).map(
-      async ([key, path]) => [key, await api(path)]
-    ));
+    if (['support', 'operator', 'manager'].includes(role) && page === 'history') {
+      paged.activity = `/activity?filter=${filter}`;
+    }
+    const entries = await Promise.all([
+      ...Object.entries(paths).map(async ([key, path]) => [key, await api(path)]),
+      ...Object.entries(paged).map(async ([key, path]) => [key, await loadList(key, path)]),
+    ]);
     Object.assign(state, Object.fromEntries(entries));
     render();
   }
@@ -245,8 +354,7 @@
     const running = rental.power === 'running';
     const pending = rental.operations.some(item => item.status === 'pending');
     const disabled = pending || !activeRental(rental);
-    return `<button type="button" class="vr-server-back" data-page="servers">← My servers</button>`
-      + heading(rental.name) + `<section class="vr-server-panel" aria-label="Server control panel">
+    return back('servers', 'My servers') + heading(rental.name) + `<section class="vr-server-panel" aria-label="Server control panel">
         <div class="vr-server-toolbar">${badge(activeRental(rental) ? rental.power : rental.status)}
           <div class="vr-actions" role="group" aria-label="Server operations">
             ${button(running ? 'Stop' : 'Start', `data-action="operation" data-id="${id}" data-kind="${running ? 'stop' : 'start'}" ${disabled ? 'disabled' : ''}`)}
@@ -276,6 +384,7 @@
     if (!activeRental(rental)) {
       return `<section class="vr-server-panel vr-renewal" aria-label="Renewal"><div class="vr-renewal-body">
         <h2>Renewal</h2><p class="vr-small">This rental has expired and can no longer be renewed. Contact support if you need the server back.</p>${savedCards()}
+        <div class="vr-actions">${button('Contact support', `data-page="new-ticket" data-id="${rental.id}"`)}</div>
       </div></section>`;
     }
     const cardOptions = state.cards.map(card => `<option value="${card.id}" ${card.id === rental.auto_renew_card_id ? 'selected' : ''}>${safe(card.masked_pan)}</option>`).join('');
@@ -348,34 +457,108 @@
     }, 3000);
   }
 
-  function pool() {
-    return heading('Server pool') + state.pool.map(server => panel(`
-      <div class="vr-row"><div><h2>${safe(server.name)}</h2><p class="vr-small">${safe(server.address)} · ${resources(server)}</p></div>${badge(server.rental_status || server.state)}</div>
-      ${server.rental_status === 'suspension_pending' ? button('Confirm suspension', `data-action="suspend" data-id="${server.rental_id}"`) : ''}
-      ${server.rental_status === 'suspended' ? `<form class="vr-form" data-form="prepare" data-id="${server.rental_id}"><label class="vr-field">New server password<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label><button class="vr-button">Confirm preparation</button></form>` : ''}
-    `)).join('') + `<details class="vr-panel"><summary>Add server</summary><form class="vr-form" data-form="server">
-      ${field('Name', 'name', 'text', '', 'required maxlength="40"')}
-      ${field('IP address', 'address', 'text', '', 'required')}
-      ${field('SSH user', 'ssh_user', 'text', 'ubuntu', 'required pattern="[a-z_][a-z0-9_-]{0,31}"')}
-      ${field('Password', 'password', 'password', '', 'required minlength="12" maxlength="128" autocomplete="new-password"')}
-      <div class="vr-columns">${field('CPU', 'cpu', 'number', '1', 'min="1" required')}${field('RAM, GB', 'ram_gb', 'number', '2', 'min="1" required')}${field('SSD, GB', 'disk_gb', 'number', '25', 'min="1" required')}</div><button class="vr-button vr-primary">Add server</button>
-    </form></details>`;
+  function queue() {
+    const orders = state.queue;
+    return heading('Allocation queue', 'Paid orders waiting for a server, oldest first.')
+      + (orders.length ? `<div class="vr-server-list">${orders.map(order => {
+        const servers = order.matching_servers;
+        const late = Date.now() - Date.parse(paidAt(order)) > 24 * hour;
+        return `<section class="vr-server-panel" aria-label="Order #${order.id}">
+          <div class="vr-server-toolbar"><h2>Order #${order.id} · ${safe(order.plan_name)}</h2><span class="vr-payment-pill ${late ? 'vr-failed' : 'vr-unpaid'}">Waiting ${since(paidAt(order))}</span></div>
+          <div class="vr-server-content">${facts([
+            ['Customer', safe(order.customer)], ['Term', duration(order.term)],
+            ['Resources', `${order.cpu} vCPU · ${order.ram_gb} GB<br><span class="vr-small">${order.disk_gb} GB SSD</span>`],
+            ['Paid', stamp(paidAt(order))],
+          ])}</div>
+          ${order.invoices.some(invoice => invoice.payment?.review_required) ? '<p class="vr-small vr-payment-error">Payment needs review. Allocation is blocked.</p>' : servers.length
+            ? `<form class="vr-form vr-inline-form" data-form="allocate" data-id="${order.id}"><label class="vr-field">Matching server<select name="server_id">${servers.map(server => `<option value="${server.id}">${safe(server.name)} · ${safe(server.address)}</option>`).join('')}</select></label><button class="vr-button vr-primary">Assign server</button></form>`
+            : `<div class="vr-row"><p class="vr-small">No available server with ${resources(order)}.</p>${button('Add matching server', `data-page="add-server" data-id="${order.id}"`)}</div>`}
+        </section>`;
+      }).join('')}</div>${moreButton('queue')}` : empty('No orders awaiting allocation'));
   }
 
-  function queue() {
-    return heading('Allocation queue') + (state.queue.length ? state.queue.map(order => {
-      const matching = state.pool.filter(server => server.state === 'available'
-        && ['cpu', 'ram_gb', 'disk_gb'].every(key => order[key] === server[key]));
-      return panel(`<div class="vr-row"><h2>Order #${order.id} · ${safe(order.plan_name)}</h2>${badge(order.status)}</div><p class="vr-small">${resources(order)}</p>
-        ${order.invoices.some(invoice => invoice.payment?.review_required) ? '<p class="vr-small vr-payment-error">Payment needs review. Allocation is blocked.</p>' : matching.length ? `<form class="vr-form" data-form="allocate" data-id="${order.id}"><label class="vr-field">Available server<select name="server_id">${matching.map(server => `<option value="${server.id}">${safe(server.name)} · ${safe(server.address)}</option>`).join('')}</select></label><button class="vr-button vr-primary">Assign server</button></form>` : '<p class="vr-small">No matching server available. This order stays in the queue.</p>'}`);
-    }).join('') : empty('No orders awaiting allocation'));
+  function poolRow(server) {
+    const rental = server.rental_id
+      ? ` · Rental #${server.rental_id} · ${safe(server.customer)} · ${server.rental_status === 'active' ? 'until' : 'expired'} ${date(server.expires_at)}` : '';
+    const action = server.rental_status === 'suspension_pending'
+      ? button('Suspend access', `data-action="suspend" data-id="${server.rental_id}"`)
+      : server.rental_status === 'suspended'
+        ? button('Prepare for reuse', `data-page="prepare" data-id="${server.id}"`, true) : '';
+    return `<div class="vr-server-row">
+      <span class="vr-server-name"><strong>${safe(server.name)} · ${safe(server.address)}</strong><small class="vr-excerpt">${resources(server)}${rental}</small></span>
+      <span class="vr-server-row-status">${badge(server.rental_status || server.state)}${action}</span>
+    </div>`;
+  }
+
+  function pool() {
+    const counts = state.counts.pool || {};
+    return `<div class="vr-row">${heading('Server pool', 'Suspensions and preparation wait under "Needs action".')}${button('Add server', 'data-page="add-server"', true)}</div>`
+      + filterNav('Filter servers', [['all', 'All'], ['action', 'Needs action'], ['available', 'Available'], ['assigned', 'Rented']].map(([value, label]) => [value, label, counts[value]]), filterFor('pool'))
+      + `<div class="vr-server-list">${state.pool.map(poolRow).join('') || empty('No servers in this group')}</div>${moreButton('pool')}`;
+  }
+
+  function addServer(orderId) {
+    const order = state.queue.find(item => item.id === orderId);
+    const spec = order || { cpu: 1, ram_gb: 2, disk_gb: 25 };
+    const origin = order ? 'queue' : 'pool';
+    return back(origin, order ? 'Allocation queue' : 'Server pool')
+      + heading('Add server', order ? `Prefilled to match order #${order.id} (${resources(order)}).` : 'Register a VPS that is already provisioned at the provider.')
+      + `<section class="vr-server-panel" aria-label="New server"><form class="vr-form" data-form="server" data-origin="${origin}">
+        <div class="vr-columns">${field('Name', 'name', 'text', '', 'required maxlength="40"')}${field('IP address', 'address', 'text', '', 'required')}</div>
+        <div class="vr-columns">${field('SSH user', 'ssh_user', 'text', 'ubuntu', 'required pattern="[a-z_][a-z0-9_-]{0,31}"')}${field('Password', 'password', 'password', '', 'required minlength="12" maxlength="128" autocomplete="new-password"')}</div>
+        <div class="vr-columns">${field('CPU', 'cpu', 'number', spec.cpu, 'min="1" required')}${field('RAM, GB', 'ram_gb', 'number', spec.ram_gb, 'min="1" required')}${field('SSD, GB', 'disk_gb', 'number', spec.disk_gb, 'min="1" required')}</div>
+        <div class="vr-actions"><button class="vr-button vr-primary">Add server</button>${button('Cancel', `data-page="${origin}"`)}</div>
+      </form></section>`;
+  }
+
+  function prepare(id) {
+    const server = state.server?.id === id ? state.server : null;
+    if (!server || server.rental_status !== 'suspended') return heading('Nothing to prepare') + back('pool', 'Server pool');
+    const steps = ['Stop and wipe at the provider', 'Reinstall the OS', 'Set a new password', 'Confirm here'];
+    return back('pool', 'Server pool') + heading(`Prepare ${server.name}`, `${server.address} · ${resources(server)}`)
+      + `<section class="vr-server-panel" aria-label="Preparation">
+        <div class="vr-server-toolbar">${badge(server.rental_status)}<span class="vr-small">Rental #${server.rental_id} · ${safe(server.customer)} · expired ${date(server.expires_at)}</span></div>
+        <div class="vr-server-content"><ol class="vr-order-progress">${steps.map((step, index) => `<li${index === steps.length - 1 ? ' aria-current="step"' : ''}><span class="vr-step-marker">${index + 1}</span><span>${step}</span></li>`).join('')}</ol></div>
+        <form class="vr-form" data-form="prepare" data-id="${server.rental_id}">
+          <p class="vr-small">The previous customer must not keep access: use a password that differs from the one they had.</p>
+          <div class="vr-columns">${field('New server password', 'password', 'password', '', 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field('Repeat password', 'repeat', 'password', '', 'required minlength="12" maxlength="128" autocomplete="new-password"')}</div>
+          <div class="vr-actions"><button class="vr-button vr-primary">Confirm preparation</button>${button('Cancel', 'data-page="pool"')}</div>
+        </form>
+      </section>`;
+  }
+
+  function pendingCard(operation) {
+    return `<section class="vr-server-panel" aria-label="Operation #${operation.id}">
+      <div class="vr-server-toolbar"><h2>${labels[operation.kind]} · ${safe(operation.server_name)}</h2><span class="vr-small">Requested ${since(operation.created_at)} ago</span>${badge(operation.status)}</div>
+      <div class="vr-server-content">${facts([
+        ['Customer', safe(operation.customer)], ['IP address', safe(operation.address)],
+        ['Power now', badge(operation.power)], ['Rental until', date(operation.expires_at)],
+      ])}</div>
+      <form class="vr-form" data-form="resolve" data-id="${operation.id}">
+        <label class="vr-field">Result for the customer<textarea name="result" required maxlength="2000">${resultHints[operation.kind]}</textarea></label>
+        <div class="vr-actions"><button class="vr-button vr-primary" name="status" value="completed">Confirm ${labels[operation.kind].toLowerCase()}</button><button class="vr-button" name="status" value="rejected">Reject</button><span class="vr-small">Requested ${stamp(operation.created_at)}</span></div>
+      </form>
+    </section>`;
+  }
+
+  function resolvedRow(operation) {
+    return `<div class="vr-log-row">
+      <time class="vr-small" datetime="${safe(operation.resolved_at)}">${time(operation.resolved_at)}</time>
+      <span class="vr-log-what"><strong>${labels[operation.kind]} · ${safe(operation.server_name)}</strong>${badge(operation.status)}<span class="vr-small">${safe(operation.result)}</span></span>
+      <span class="vr-small vr-log-actor" title="${safe(operation.customer)}">${safe(operation.customer)}</span>
+      <span class="vr-small vr-log-actor" title="${safe(operation.resolved_by)}">by ${safe(operation.resolved_by)}</span>
+    </div>`;
   }
 
   function operations() {
-    return heading('Operation requests') + (state.operations.length ? state.operations.map(operation => panel(`
-      <div class="vr-row"><h2>${safe(operation.kind)} · ${safe(operation.server_name)}</h2>${badge(operation.status)}</div>
-      ${operation.status === 'pending' ? `<form class="vr-form" data-form="resolve" data-id="${operation.id}"><label class="vr-field">Result<textarea name="result" required maxlength="2000"></textarea></label><div class="vr-actions"><button class="vr-button vr-primary" name="status" value="completed">Confirm completed</button><button class="vr-button" name="status" value="rejected">Reject</button></div></form>` : `<p>${safe(operation.result)}</p>`}
-    `)).join('') : empty('No operation requests'));
+    const filter = filterFor('operations');
+    const items = state.operations;
+    return heading('Operation requests', 'Customers are waiting: confirm each action only after doing it at the provider.')
+      + filterNav('Filter operations', [['pending', 'Pending', state.counts.operations?.pending], ['resolved', 'Resolved']], filter)
+      + (filter === 'pending'
+        ? (items.length ? `<div class="vr-server-list">${items.map(pendingCard).join('')}</div>` : empty('No pending requests'))
+        : (items.length ? dayGroups(items, 'resolved_at', resolvedRow, 'request') : empty('No resolved requests')))
+      + moreButton('operations');
   }
 
   function field(label, name, type = 'text', value = '', extra = '') {
@@ -387,35 +570,98 @@
       ${field('Email', 'email', 'email', '', 'required autocomplete="username"')}
       ${field('Password', 'password', 'password', '', `required minlength="12" maxlength="128" autocomplete="${register ? 'new-password' : 'current-password'}"`)}
       <div class="vr-actions"><button class="vr-button vr-primary">${register ? 'Create account' : 'Sign in'}</button>${button(register ? 'Sign in' : 'Create account', `data-page="${register ? 'login' : 'register'}"`)}</div>
-    </form>`);
+    </form>
+    ${state.googleEnabled ? '<a class="vr-button vr-google" href="/api/auth/google/start">Continue with Google</a>' : ''}`);
+  }
+
+  function ticketRow(ticket) {
+    const support = state.user.role === 'support';
+    const last = ticket.last_message;
+    const context = [support && ticket.customer, ticket.server_name]
+      .filter(Boolean).map(safe).join(' · ');
+    const pill = awaitingViewer(ticket)
+      ? `<span class="vr-payment-pill${support ? ' vr-unpaid' : ''}">${support ? 'Needs reply' : 'New reply'}</span>` : '';
+    return `<button type="button" class="vr-server-row" data-page="ticket" data-id="${ticket.id}">
+      <span class="vr-server-name"><strong>#${ticket.id} · ${safe(ticket.subject)}</strong>
+        <small class="vr-excerpt">${context ? `${context} · ` : ''}${author(last.author)}: ${safe(last.body)}</small></span>
+      <span class="vr-server-row-status">${pill}<span class="vr-small">${stamp(ticket.last_message_at)}</span>${badge(ticket.status)}<span class="vr-server-manage">Open →</span></span>
+    </button>`;
   }
 
   function tickets() {
-    return heading(state.user.role === 'support' ? 'Tickets' : 'Support')
-      + (state.user.role === 'customer' ? button('New ticket', 'data-page="new-ticket"', true) : '')
-      + (state.tickets.map(ticket => panel(`<div class="vr-row"><h2>#${ticket.id} · ${safe(ticket.subject)}</h2>${badge(ticket.status)}</div>${button('Open ticket', `data-page="ticket" data-id="${ticket.id}"`)}`)).join('') || empty('No tickets yet'));
+    const support = state.user.role === 'support';
+    const filter = filterFor('tickets');
+    const counts = state.counts.tickets || {};
+    const filters = [['awaiting', 'Needs reply'], ...ticketStatuses.map(status => [status, labels[status]]), ['all', 'All']];
+    const none = filter === 'awaiting' ? 'Nobody is waiting for a reply' : 'No tickets with this status';
+    return `<div class="vr-row">${heading(support ? 'Tickets' : 'Support', support ? 'Most recent conversations first.' : 'Ask about your servers, payments or account.')}${support ? '' : button('New ticket', 'data-page="new-ticket"', true)}</div>`
+      + (support ? filterNav('Filter tickets', filters.map(([value, label]) => [value, label, counts[value]]), filter) : '')
+      + `<div class="vr-server-list">${state.tickets.map(ticketRow).join('') || empty(support ? none : 'No tickets yet')}</div>${moreButton('tickets')}`;
   }
 
-  function newTicket() {
-    return heading('New ticket') + panel(`<form class="vr-form" data-form="ticket">
+  function newTicket(rentalId) {
+    return back('tickets', 'Support') + heading('New ticket') + panel(`<form class="vr-form" data-form="ticket">
       ${field('Subject', 'subject', 'text', '', 'required maxlength="160"')}
-      <label class="vr-field">Server<select name="rental_id"><option value="">General question</option>${state.rentals.map(rental => `<option value="${rental.id}">${safe(rental.name)}</option>`).join('')}</select></label>
+      <label class="vr-field">Server<select name="rental_id"><option value="">General question</option>${state.rentals.map(rental => `<option value="${rental.id}" ${rental.id === rentalId ? 'selected' : ''}>${safe(rental.name)}</option>`).join('')}</select></label>
       <label class="vr-field">Message<textarea name="body" required maxlength="5000"></textarea></label><button class="vr-button vr-primary">Send ticket</button>
     </form>`);
   }
 
   function ticketDetails(id) {
-    const ticket = state.tickets.find(item => item.id === id);
-    if (!ticket) return heading('Ticket not found');
-    return heading(`#${id} · ${ticket.subject}`) + panel(`<div class="vr-row">${badge(ticket.status)}${state.user.role === 'support' ? `<div class="vr-actions">${['open', 'in_progress', 'closed'].map(status => button(labels[status], `data-action="ticket-status" data-id="${id}" data-status="${status}" ${status === ticket.status ? 'disabled' : ''}`)).join('')}</div>` : ''}</div>
-      ${ticket.server ? `<p class="vr-small">${safe(ticket.server.name)} · ${safe(ticket.server.address)} · ${safe(labels[ticket.server.status])}</p>` : ''}
-      ${ticket.messages.map(message => `<section class="vr-message"><div class="vr-row vr-small"><strong>${safe(message.author)}</strong><span>${date(message.created_at)}</span></div><p>${safe(message.body)}</p></section>`).join('')}
-      ${ticket.status === 'closed' ? '' : `<form class="vr-form" data-form="reply" data-id="${id}"><label class="vr-field">Reply<textarea name="body" required maxlength="5000"></textarea></label><button class="vr-button vr-primary">Send reply</button></form>`}
-    `);
+    const support = state.user.role === 'support';
+    const ticket = state.ticket?.id === id ? state.ticket : null;
+    if (!ticket) return heading('Ticket not found') + back('tickets', support ? 'Tickets' : 'Support');
+    const server = ticket.server;
+    const context = [
+      ['Server', server ? `${safe(server.name)}<br><span class="vr-small">${safe(server.address)}</span>` : 'General question'],
+      ...(server ? [['Rental', badge(server.status)], ['Expires', date(server.expires_at)]] : []),
+      support ? ['Customer', safe(ticket.customer)] : ['Messages', ticket.messages.length],
+    ];
+    const statusControl = support
+      ? `<div class="vr-actions" role="group" aria-label="Ticket status">${ticketStatuses.map(status => button(labels[status], `data-action="ticket-status" data-id="${id}" data-status="${status}" aria-pressed="${status === ticket.status}"`)).join('')}</div>`
+      : `<span class="vr-small">Updated ${stamp(ticket.last_message_at)}</span>`;
+    const footer = ticket.status === 'closed'
+      ? `<div class="vr-row"><p class="vr-note">This ticket is closed${support ? '. Reopen it to reply.' : '. Open a new ticket if the problem returns.'}</p>${support ? '' : button('New ticket', `data-page="new-ticket" data-id="${ticket.rental_id || ''}"`)}</div>`
+      : `<form class="vr-form" data-form="reply" data-id="${id}">
+          <label class="vr-field">Reply<textarea name="body" required maxlength="5000" placeholder="${support ? 'Write to the customer…' : 'Add details for the support team…'}"></textarea></label>
+          <div class="vr-actions"><button class="vr-button vr-primary">Send reply</button>${support && ticket.status === 'open' ? '<span class="vr-small">Replying moves the ticket to In Progress.</span>' : ''}</div>
+        </form>`;
+    return back('tickets', support ? 'Tickets' : 'Support')
+      + heading(ticket.subject, `#${id} · Opened ${stamp(ticket.created_at)}`)
+      + `<section class="vr-server-panel" aria-label="Ticket">
+          <div class="vr-server-toolbar">${badge(ticket.status)}${statusControl}</div>
+          <div class="vr-server-content">${facts(context)}</div>
+        </section>
+        <section class="vr-server-panel vr-thread" aria-label="Conversation">
+          ${ticket.messages.map(message => `<article class="vr-message${message.author === 'support' ? ' vr-message-staff' : ''}">
+            <div class="vr-row vr-small"><strong>${author(message.author)}</strong><time datetime="${safe(message.created_at)}">${stamp(message.created_at)}</time></div>
+            <p>${safe(message.body)}</p>
+          </article>`).join('')}
+          ${footer}
+        </section>`;
+  }
+
+  function activityRow(item) {
+    const page = entityPages[item.entity_type];
+    const entity = `${item.entity_type[0].toUpperCase()}${item.entity_type.slice(1)} #${item.entity_id}`;
+    return `<div class="vr-log-row">
+      <time class="vr-small" datetime="${safe(item.created_at)}">${time(item.created_at)}</time>
+      <span class="vr-log-what"><strong>${safe(activityActions[item.action] || item.action.replaceAll('_', ' '))}</strong>${labels[item.result] ? badge(item.result) : `<span class="vr-small">${safe(item.result)}</span>`}</span>
+      <span class="vr-small vr-log-actor" title="${safe(item.actor)}">${safe(item.actor)}</span>
+      ${page ? `<button type="button" class="vr-link" data-page="${page}" data-id="${item.entity_id}">${entity} →</button>` : `<span class="vr-small">${entity}</span>`}
+    </div>`;
   }
 
   function history() {
-    return heading('Activity history') + (state.activity.map(item => panel(`<div class="vr-row"><strong>${safe(item.action.replaceAll('_', ' '))}</strong><span class="vr-small">${date(item.created_at)}</span></div><p>${safe(item.result)}</p><p class="vr-small">${safe(item.actor)} · ${safe(item.entity_type)} #${item.entity_id}</p>`)).join('') || empty('No activity yet'));
+    const role = state.user.role;
+    const subtitles = {
+      support: 'Ticket actions by customers and the support team.',
+      operator: 'Orders, payments, rentals, servers and operation requests.',
+      manager: 'Changes to rental plans.',
+    };
+    return heading('Activity history', subtitles[role])
+      + filterNav('Filter activity', activityFilters[role], filterFor('history'))
+      + (state.activity.length ? dayGroups(state.activity, 'created_at', activityRow, 'event') + moreButton('activity') : empty('No activity yet'));
   }
 
   function manage() {
@@ -435,20 +681,30 @@
 
   function render() {
     const role = state.user?.role || 'visitor';
-    let { page, id } = route();
-    if (page === 'home') page = menus[role][0][0];
+    const { page, id } = route();
     const parent = { checkout: 'plans', register: 'login', server: 'servers',
       ticket: 'tickets', 'new-ticket': 'tickets', 'edit-plan': 'manage', renew: 'servers',
-      invoice: 'orders' };
-    const available = menus[role].filter(([name]) => role !== 'customer'
-      || name !== 'tickets' || state.orders.some(order => invoiceFor(order).status === 'paid'));
-    nav.innerHTML = available.map(([name, label]) => `<button type="button" data-page="${name}" ${name === (parent[page] || page) ? 'aria-current="page"' : ''}>${label}</button>`).join('');
-    root.querySelector('.vr-account').innerHTML = state.user ? button('Sign out', 'data-action="logout"') : '';
+      invoice: 'orders', 'add-server': 'pool', prepare: 'pool' };
+    // Work waiting for staff, shown next to the menu item.
+    const counts = {
+      support: { tickets: () => state.counts.tickets?.awaiting },
+      operator: {
+        queue: () => state.counts.queue,
+        pool: () => state.counts.pool?.action,
+        operations: () => state.counts.operations?.pending,
+      },
+    }[role] || {};
+    nav.innerHTML = menus[role].map(([name, label]) => {
+      const count = counts[name]?.() || 0;
+      return `<button type="button" data-page="${name}" ${name === (parent[page] || page) ? 'aria-current="page"' : ''}>${label}${count ? `<span class="vr-count">${count}</span>` : ''}</button>`;
+    }).join('');
+    root.querySelector('.vr-account').innerHTML = state.user ? (state.googleEnabled && !state.user.google_linked ? '<a href="/api/auth/google/start?link=true">Link Google account</a> ' : '') + button('Sign out', 'data-action="logout"') : '';
     root.querySelector('.vr-identity').textContent = state.user ? state.user.email : '';
     const screens = {
       plans: catalogue, checkout, orders, servers, server: () => serverDetails(id),
       login: () => auth(), register: () => auth(true), queue, pool, operations,
-      tickets, 'new-ticket': newTicket, ticket: () => ticketDetails(id),
+      'add-server': () => addServer(id), prepare: () => prepare(id),
+      tickets, 'new-ticket': () => newTicket(id), ticket: () => ticketDetails(id),
       history, manage, 'edit-plan': () => editPlan(id), renew: () => serverDetails(id),
       invoice: () => invoicePage(id),
     };
@@ -481,8 +737,7 @@
       location.assign(payment.page_url);
       return;
     }
-    go('invoice', invoiceId);
-    await refresh();
+    await go('invoice', invoiceId);
   }
 
   main.addEventListener('change', async event => {
@@ -516,23 +771,29 @@
   root.addEventListener('click', async event => {
     const control = event.target.closest('button[type="button"]');
     if (!control || control.disabled) return;
-    const { action, page, id: rawId, kind, status } = control.dataset;
+    const { action, page, filter, id: rawId, kind, status } = control.dataset;
     const id = Number(rawId);
-    if (page) {
-      notice(''); go(page, id);
+    if (filter) {
+      state.filters[route().page] = filter;
       try { await refresh(); } catch (error) { notice(error.message, true); }
+      return;
+    }
+    if (page) {
+      try { await go(page, id); } catch (error) { notice(error.message, true); }
       return;
     }
     if (!action) return;
     control.disabled = true;
     try {
       if (action === 'choose') {
-        state.selectedPlan = id; state.term = 'monthly'; go('checkout');
+        state.selectedPlan = id; state.term = 'monthly'; await go('checkout');
       } else if (action === 'logout') {
         await api('/auth/logout', 'POST');
         state.user = null; state.csrf = ''; state.orders = [];
         state.rentals = []; state.tickets = []; state.openOrders.clear();
-        await refresh(); go('plans');
+        Object.assign(state, { counts: {}, ticket: null, server: null, filters: {} });
+        for (const key of Object.keys(lists)) delete lists[key];
+        await go('plans');
       } else if (action === 'pay') {
         await startPayment(id, saveCardChoice(control));
       } else if (action === 'remove-card') {
@@ -556,10 +817,15 @@
           control.setAttribute('aria-label', 'Show server password');
         }
       } else if (action === 'suspend') {
+        if (!confirm('Suspend access? Confirm only after stopping the server at the provider.')) return;
         await api(`/operator/rentals/${id}/suspend`, 'POST'); await refresh();
+        notice('Access suspended. Prepare the server before reuse.');
       } else if (action === 'renew') {
         const invoice = await api(`/rentals/${id}/renewal-invoice`, 'POST');
         await startPayment(invoice.id, saveCardChoice(control));
+      } else if (action === 'more') {
+        const key = control.dataset.list;
+        state[key] = await loadList(key, lists[key].path, true); render();
       } else if (action === 'ticket-status') {
         await api(`/tickets/${id}/status`, 'POST', { status }); await refresh();
       } else if (action === 'toggle-plan') {
@@ -585,50 +851,65 @@
       if (type === 'login' || type === 'register') {
         const session = await api(`/auth/${type}`, 'POST', data);
         state.user = session.user; state.csrf = session.csrf_token;
-        await refresh();
-        go(state.selectedPlan && state.user.role === 'customer' ? 'checkout' : 'home');
+        await go(state.selectedPlan && state.user.role === 'customer' ? 'checkout' : 'home');
       } else if (type === 'order') {
-        if (!state.user) { go('login'); return; }
+        if (!state.user) { await go('login'); return; }
         const order = await api('/orders', 'POST', {
           plan_id: state.selectedPlan, term: data.term,
         });
         state.selectedPlan = null;
-        state.openOrders.add(order.id); await refresh(); go('orders');
+        state.openOrders.add(order.id); await go('orders');
       } else if (type === 'allocate') {
         await api(`/operator/orders/${id}/allocate`, 'POST', { server_id: Number(data.server_id) });
         await refresh(); notice('Server assigned.');
       } else if (type === 'resolve') {
         await api(`/operator/operations/${id}/resolve`, 'POST', data); await refresh();
+        notice(data.status === 'completed' ? 'Request completed.' : 'Request rejected.');
       } else if (type === 'ticket') {
         const ticket = await api('/tickets', 'POST', {
           ...data, rental_id: data.rental_id ? Number(data.rental_id) : null,
         });
-        await refresh(); go('ticket', ticket.id);
+        state.ticket = ticket; await go('ticket', ticket.id);
       } else if (type === 'reply') {
         await api(`/tickets/${id}/messages`, 'POST', data); await refresh();
+        notice('Reply sent.');
       } else if (type === 'prepare') {
-        await api(`/operator/rentals/${id}/prepare`, 'POST', data); await refresh();
+        if (data.password !== data.repeat) throw new Error('The passwords do not match.');
+        await api(`/operator/rentals/${id}/prepare`, 'POST', { password: data.password });
+        await go('pool'); notice('Server is ready for allocation.');
       } else if (type === 'server') {
         for (const key of ['cpu', 'ram_gb', 'disk_gb']) data[key] = Number(data[key]);
-        await api('/operator/servers', 'POST', data); await refresh();
+        await api('/operator/servers', 'POST', data);
+        await go(form.dataset.origin); notice('Server added.');
       } else if (type === 'plan') {
         for (const key of ['cpu', 'ram_gb', 'disk_gb', 'monthly_cents', 'annual_cents']) data[key] = Number(data[key]);
         data.enabled = state.managedPlans.find(plan => plan.id === id)?.enabled ?? true;
         await api(`/management/plans${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', data);
-        await refresh(); go('manage');
+        await go('manage');
       }
     } catch (error) { notice(error.message, true); }
     finally { controls.forEach(control => { control.disabled = false; }); }
   });
 
-  window.addEventListener('hashchange', () => { notice(''); render(); });
+  // Back/forward and typed addresses: load the page; go() already did.
+  window.addEventListener('hashchange', async () => {
+    const own = location.hash === routed;
+    routed = '';
+    if (own) return;
+    notice('');
+    try { await refresh(); } catch (error) { notice(error.message, true); }
+  });
   async function start() {
     try {
+      state.googleEnabled = (await api('/auth/google/config')).enabled;
       try {
         const session = await api('/auth/me');
         state.user = session.user; state.csrf = session.csrf_token;
       } catch (error) { if (error.status !== 401) throw error; }
       await refresh();
+      // The Google callback redirects here when sign-in did not complete.
+      if (location.hash === '#login/google-relogin') notice('Sign out and sign in again with your password, then choose Link Google account.', true);
+      if (location.hash === '#login/google-failed') notice('Google sign-in failed. For an existing account, sign in with your password and choose Link Google account.', true);
     } catch (error) {
       main.innerHTML = heading('Unable to load VPS Rent');
       notice(error.message, true);
@@ -636,7 +917,7 @@
   }
   setInterval(async () => {
     if (document.hidden || state.loading || !state.user) return;
-    if (!['orders', 'servers', 'server', 'renew', 'queue', 'operations', 'pool'].includes(route().page)) return;
+    if (!['orders', 'servers', 'server', 'renew', 'queue', 'operations', 'pool', 'tickets', 'ticket', 'history'].includes(route().page)) return;
     if (main.contains(document.activeElement)) return;
     if (main.querySelector('#vr-server-password:not([hidden])')) return;
     if (main.querySelector('form[data-dirty="true"]')) return;

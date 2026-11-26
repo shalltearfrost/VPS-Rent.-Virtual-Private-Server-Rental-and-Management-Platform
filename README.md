@@ -82,6 +82,49 @@ suspension and preparation are recorded manual workflows: this version does not
 call a provider API or perform actual host commands. Confirm actions only after
 performing them at the provider when using real infrastructure.
 
+## Google sign-in
+
+Customers can sign in with Google next to the email/password form. The button appears when both Google OAuth credentials are configured.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   configure the OAuth consent screen (External; while it is in Testing, add
+   your Google accounts as test users).
+2. Create an **OAuth client ID** of type **Web application** and add the
+   authorized redirect URI `{PUBLIC_URL}/api/auth/google/callback`, locally
+   `http://127.0.0.1:8000/api/auth/google/callback`. It must match `PUBLIC_URL`
+   exactly: `localhost` and `127.0.0.1` are different addresses, and open the
+   app at the same address so the cookies match.
+3. Put the client values in `.env` and restart the application:
+
+   ```
+   GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=...
+   ```
+
+A first Google sign-in with a new email creates a customer account. To connect
+an existing account, sign in with its password and select **Link Google account**
+within ten minutes. The verified Google email must match that account.
+
+## Load-test data
+
+`scripts/load_data.py` fills the database with about 480,000 related rows
+(2,000 customers, 3,000 servers, 20,000 orders, 50,000 tickets with 150,000
+messages, 200,000 history records) in roughly 15 seconds, and removes exactly
+those rows again:
+
+```powershell
+.venv/Scripts/python.exe scripts/load_data.py seed     # --scale 0.2 for fewer rows
+.venv/Scripts/python.exe scripts/load_data.py status
+.venv/Scripts/python.exe scripts/load_data.py purge
+```
+
+Generated accounts use `@<tag>.load.invalid` emails and cannot sign in;
+servers are named `load-<tag>-N` with 198.18.0.0/15 test addresses. Use
+`--tag` to keep several data sets apart and `--database` to target another
+database on the same server (for example `vpsrent_test`). Each command runs
+in one transaction. Purge never touches real rows; if a real order was
+allocated to a generated server, that server is kept and reported.
+
 Stop Uvicorn with Ctrl+C. For the Windows database:
 
 ```powershell

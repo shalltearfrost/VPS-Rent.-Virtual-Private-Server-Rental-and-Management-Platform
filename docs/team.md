@@ -70,3 +70,9 @@ and settlement validation, then added explicit UAH quoting after a real sandbox
 check exposed Monobank conversion. These fixes and regressions were applied to
 the PR branch and integrated with the existing Beta role and operation tests.
 This is a shared assisted integration; each member must review the final code.
+
+## Subsequent integration
+
+Illia Yerokhin contributed the staff workspace redesign, cursor pagination,
+load-test fixtures and optional Google sign-in in PRs #2 and #3. These
+changes build on his Monobank payment integration in PR #1.

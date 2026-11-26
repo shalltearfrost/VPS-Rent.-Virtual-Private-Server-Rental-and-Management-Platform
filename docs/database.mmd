@@ -25,7 +25,8 @@ erDiagram
     }
     USERS {
         varchar(254) email UK
-        text password_hash
+        text password_hash "NULL"
+        varchar(255) google_sub UK "NULL"
         varchar(16) role
         bigint id PK
         timestamptz created_at
@@ -63,6 +64,7 @@ erDiagram
         timestamptz created_at
     }
     SESSIONS {
+        timestamptz authenticated_at "NULL"
         bigint user_id FK
         varchar(64) token_hash UK
         varchar(64) csrf_token
@@ -106,6 +108,8 @@ erDiagram
         bigint rental_id FK "NULL"
         varchar(160) subject
         varchar(16) status
+        timestamptz last_message_at
+        boolean awaiting_support
         bigint id PK
         timestamptz created_at
     }

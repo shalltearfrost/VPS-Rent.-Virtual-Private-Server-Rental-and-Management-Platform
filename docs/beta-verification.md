@@ -2,6 +2,17 @@ Andrii Moroz · Artem Ankudinov · Illia Yerokhin
 
 # Beta 0.3.0 verification
 
+## Integrated pull requests — 26 November 2026
+
+The combined payment, staff workspace and Google sign-in branches passed 73
+automated tests against an isolated PostgreSQL 17.11 database. The schema
+audit matched 14 tables, 131 columns and 22 foreign keys. Alembic reported
+no model drift. Ruff and the JavaScript syntax check passed. A Chromium
+check with fixture responses verified that refreshing 250 visible rows
+keeps all five pages, the next page loads, and the Google button follows
+the OAuth configuration. Google token exchange was mocked in the tests.
+The historical sandbox and browser checks below describe the 18 November build.
+
 Verified on 18 November 2026, Europe/Warsaw, using Windows, Python 3.13,
 PostgreSQL 17.11 and Chrome. Fixes are pushed to
 [PR #1](https://github.com/shalltearfrost/VPS-Rent.-Virtual-Private-Server-Rental-and-Management-Platform/pull/1),

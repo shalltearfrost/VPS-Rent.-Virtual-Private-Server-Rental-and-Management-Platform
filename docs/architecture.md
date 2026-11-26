@@ -18,6 +18,19 @@ relevant views when forms are not being edited or a password revealed. The
 application serves its own CSS, JavaScript and Public Sans files under `/assets`;
 there are no build tools or external frontend services required at runtime.
 
+## Lists and pagination
+
+Tickets, history, the allocation queue, the server pool and operation requests
+are paged with keyset cursors (`app/pagination.py`): a response is
+`{"items": [...], "next_cursor": ...}` and the next page continues after the
+last row's `(sort key, id)` instead of skipping rows with `OFFSET`. It stays
+fast deep into a list and never repeats or skips rows while new ones arrive.
+Pages hold 50 rows; the frontend's "Show more" appends the next one, and
+polling refreshes the visible list in batches of at most 200 rows. Filters
+run in the API and each list is built with joins in a constant number of
+queries (`tests/test_pagination.py` counts them). Menu and filter badges come
+from `GET /api/counts`, and the ticket and server pages load their own record.
+
 ## Order request flow
 
 1. `GET /api/plans` reads enabled plans. The frontend renders the three tariff
@@ -82,9 +95,9 @@ deleting old rows or repeating fulfillment. New checkout uses `payments`.
 | Allocation, operation resolution, suspension/preparation | No | Yes | No | No |
 | Request server operations | Own active rental | No | No | No |
 | Support conversations | Own | No | Yes | No |
-| Ticket statuses | No | No | Yes | No |
+| Ticket statuses | No | No | Yes (a reply to an open ticket moves it to in progress) | No |
 | Create/update/disable plans | No | No | No | Yes |
-| Activity | No | Operational actions | Ticket actions | No |
+| Activity history | No | Orders, payments, rentals, servers, operations | Ticket actions (opened, replies, status) | Plan changes |
 
 User roles come from the database, never a request field or frontend menu.
 Operation resolution re-reads the locked request with `populate_existing=True`.
@@ -99,6 +112,33 @@ Fernet encryption with an environment key. HttpOnly session tokens are hashed
 before storage, expire after 24 hours, and are removed on logout. A separate
 session-bound CSRF token is required for authenticated writes. Origin checks
 also cover unauthenticated login/registration. API responses use `no-store`.
+
+## Google sign-in flow
+
+Google sign-in uses the OAuth 2.0 authorization code flow with PKCE, run by the
+backend; the browser loads no Google scripts, so the CSP is unchanged.
+
+1. The sign-in page links to `GET /api/auth/google/start`. It creates a random
+   `state` and PKCE `code_verifier`, stores both in a 10-minute HttpOnly
+   `g_oauth` cookie limited to `/api/auth/google`, and redirects to Google with
+   `state` and the SHA-256 `code_challenge`.
+2. Google returns the browser to `GET /api/auth/google/callback?code&state`.
+   The backend compares `state` with the cookie (login CSRF protection), then
+   exchanges `code` and `code_verifier` for tokens at Google's token endpoint
+   using the client secret.
+3. The ID token came directly from Google over TLS, so its claims are checked
+   without a signature check (OpenID Connect Core 3.1.3.7): issuer, audience
+   (our client ID), expiry and `email_verified`.
+4. Sign-in looks up the Google subject. A matching local email alone does
+   not link accounts. Linking requires an explicit link request, the same
+   recently authenticated user and a matching verified Google email.
+5. The usual session (`begin_session`) is created and the browser is redirected
+   to `/#home`; the frontend then loads it through `/api/auth/me`. Any failure
+   redirects to `/#login/google-failed`, where the page shows an error.
+
+Google HTTP calls and token checks live in `app/googleAuth/auth.py`; the
+endpoints are in `app/api.py`. Accounts without a password always fail
+password sign-in, with the same timing as a wrong password.
 
 ## Review questions each member should answer
 

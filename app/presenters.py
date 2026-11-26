@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -95,33 +96,50 @@ def rental_view(db: Session, rental: Rental) -> dict:
     }
 
 
-def order_view(db: Session, order: Order) -> dict:
-    invoices = db.scalars(
-        select(Invoice)
-        .where(Invoice.order_id == order.id)
-        .order_by(Invoice.id)
-    ).all()
+def order_views(db: Session, orders: list[Order]) -> list[dict]:
+    """Present a page of orders with three queries in total."""
+    if not orders:
+        return []
+    ids = [order.id for order in orders]
+    invoices = defaultdict(list)
+    for invoice in db.scalars(
+        select(Invoice).where(Invoice.order_id.in_(ids)).order_by(Invoice.id)
+    ):
+        invoices[invoice.order_id].append(invoice)
+    invoice_ids = [item.id for items in invoices.values() for item in items]
     latest = {}
     for payment in db.scalars(
         select(Payment)
-        .where(Payment.invoice_id.in_([item.id for item in invoices]))
+        .where(Payment.invoice_id.in_(invoice_ids))
         .order_by(Payment.id)
     ):
         latest[payment.invoice_id] = payment
-    rental = db.scalar(select(Rental).where(Rental.order_id == order.id))
-    return {
-        "id": order.id,
-        "plan_name": order.plan_name,
-        "cpu": order.cpu,
-        "ram_gb": order.ram_gb,
-        "disk_gb": order.disk_gb,
-        "price_cents": order.price_cents,
-        "renewal_cents": order.renewal_cents,
-        "term": order.term,
-        "status": order.status,
-        "created_at": order.created_at,
-        "invoices": [
-            invoice_view(item, latest.get(item.id)) for item in invoices
-        ],
-        "rental_id": rental.id if rental else None,
-    }
+    rentals = dict(
+        db.execute(
+            select(Rental.order_id, Rental.id).where(Rental.order_id.in_(ids))
+        ).all()
+    )
+    return [
+        {
+            "id": order.id,
+            "plan_name": order.plan_name,
+            "cpu": order.cpu,
+            "ram_gb": order.ram_gb,
+            "disk_gb": order.disk_gb,
+            "price_cents": order.price_cents,
+            "renewal_cents": order.renewal_cents,
+            "term": order.term,
+            "status": order.status,
+            "created_at": order.created_at,
+            "invoices": [
+                invoice_view(item, latest.get(item.id))
+                for item in invoices[order.id]
+            ],
+            "rental_id": rentals.get(order.id),
+        }
+        for order in orders
+    ]
+
+
+def order_view(db: Session, order: Order) -> dict:
+    return order_views(db, [order])[0]

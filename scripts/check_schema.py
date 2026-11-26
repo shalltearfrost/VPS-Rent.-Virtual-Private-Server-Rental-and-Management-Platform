@@ -215,6 +215,23 @@ def audit_diagram():
     return column_count, report
 
 
+def normalize_sql(sql: str) -> str:
+    # At a two-parent merge Alembic can delete either old version row and
+    # update the other. Both operations consume exactly the same two heads.
+    merge_stamp = (
+        r"DELETE FROM alembic_version WHERE "
+        r"alembic_version\.version_num = '([a-f0-9]+)'; "
+        r"UPDATE alembic_version SET version_num='([a-f0-9]+)' "
+        r"WHERE alembic_version\.version_num = '([a-f0-9]+)';"
+    )
+
+    def parents(match):
+        left, head, right = match.groups()
+        return "MERGE " + " ".join(sorted([left, right])) + " INTO " + head
+
+    return re.sub(merge_stamp, parents, " ".join(sql.split()))
+
+
 def main():
     migrated = migration_metadata()
     assert set(migrated.tables) == set(Base.metadata.tables)
@@ -228,9 +245,7 @@ def main():
         sql=True,
     )
     expected_sql = (ROOT / "docs/schema.sql").read_text(encoding="utf-8")
-    assert " ".join(buffer.getvalue().split()) == " ".join(
-        expected_sql.split()
-    )
+    assert normalize_sql(buffer.getvalue()) == normalize_sql(expected_sql)
     columns, relationships = audit_diagram()
 
     inspector = sa.inspect(get_engine())
