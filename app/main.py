@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     get_engine().dispose()
 
 
-app = FastAPI(title="VPS Rent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="VPS Rent", version="0.3.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(billing_router)
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")

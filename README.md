@@ -1,8 +1,24 @@
 Andrii Moroz Â· Artem Ankudinov Â· Illia Yerokhin
 
-# VPS Rent â€” Alpha
+# VPS Rent â€” Beta
 
-FastAPI + PostgreSQL rental platform.
+FastAPI + PostgreSQL rental platform, version 0.3.0.
+
+The coursework product is Linux VPS rental and management. Minecraft hosting,
+game-server panels, proxy hosting and supplier resale are outside its scope.
+
+## Beta submission
+
+- [Requirements status and Alpha issue resolutions](docs/beta.md)
+- [Live review instructions for every role](docs/beta-review.md)
+- [Team contributions and scope changes](docs/team.md)
+- [Database design](docs/database.md), [full ER diagram](docs/database.mmd)
+- [Architecture, permissions and request flow](docs/architecture.md)
+
+The supplied Beta rubric requires a working application and real PostgreSQL;
+it does not require purchasing live VPS inventory. The seed uses explicitly
+documented example IPs. Infrastructure actions follow the manual operator
+workflow from Stage 1. They do not execute SSH or provider commands.
 
 ## Run
 
@@ -60,47 +76,11 @@ operator if keeping a customer session open.
 
 `app.seed` loads `.env` itself; no manual environment-variable export is needed.
 The three seeded servers use **192.0.2.0/24 documentation addresses**. They are
-database inventory for the Alpha and cannot be reached over SSH. Operators can
+database inventory for the Beta and cannot be reached over SSH. Operators can
 add real, already provisioned VPS credentials in Server pool. Start/stop/restart,
 suspension and preparation are recorded manual workflows: this version does not
 call a provider API or perform actual host commands. Confirm actions only after
 performing them at the provider when using real infrastructure.
-
-## Payments (Monobank)
-
-Payments use the Monobank acquiring sandbox. Invoices stay in EUR; before
-checkout the backend saves an exact UAH quote using the public EUR/UAH sell
-rate and sends `ccy=980`. Settlement must match that saved charge.
-The gateway verifies a test merchant and rejects live tokens. See
-[payment reliability](docs/payment-reliability.md) for durable attempts,
-uncertain charge recovery and asynchronous refund confirmation.
-
-1. Get a test token at https://api.monobank.ua/ (no real money is charged; any
-   card number that passes the Luhn check works on the payment page).
-2. Put it in `.env` as `MONOBANK_TOKEN=...` and restart the application.
-   Without a token the rest of the app works and payment buttons return 503.
-3. Set `PUBLIC_URL` to the address customers open, e.g.
-   `https://vps.example.org`. Monobank returns customers there after paying.
-   Only an **https** `PUBLIC_URL` enables webhooks
-   (`/api/payments/monobank/webhook`, verified with Monobank's ECDSA key).
-   Locally (`http://127.0.0.1:8000`) the background worker and the payment
-   status page poll Monobank instead, so payments still complete.
-
-Customers can tick "Save card for automatic renewal" when paying. The card
-token is stored encrypted, and the server page lets them choose the card for
-automatic renewal or remove it. Saving cards (`saveCardData`) must be enabled
-for the merchant token by Monobank. Optional settings:
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `AUTO_RENEW_DAYS_BEFORE` | 3 | Start charging this many days before expiry |
-| `AUTO_RENEW_RETRY_HOURS` | 12 | Wait between failed automatic charges |
-| `PAYMENT_VALIDITY_SECONDS` | 3600 | Lifetime of a Monobank payment page |
-| `MONOBANK_WALLET_PREFIX` | vpsrent | Prefix for per-customer card wallets |
-
-For deployment, also set `COOKIE_SECURE=true` and serve the app over https.
-Every application process runs the expiry/billing worker; row locks with
-`SKIP LOCKED` and unique indexes keep it safe with several workers.
 
 Stop Uvicorn with Ctrl+C. For the Windows database:
 
@@ -110,12 +90,78 @@ Stop Uvicorn with Ctrl+C. For the Windows database:
 
 Stopping the database preserves its data.
 
+## Monobank test payments
+
+Set `MONOBANK_TEST_TOKEN` in your ignored `.env` using a sandbox token from
+[Monobank](https://api.monobank.ua/). `MONOBANK_TOKEN` is an equivalent setting;
+use one name. The backend verifies a `test_` merchant and rejects live tokens.
+With no token, payment creation returns HTTP 503. There is no local endpoint
+that can mark a Monobank invoice paid without bank confirmation.
+
+The catalogue and customer invoices use EUR. Before each new payment, the
+backend obtains the official EUR/UAH sell rate, rounds half up to kopecks and
+persists the exact UAH charge. The bank receives UAH (`ccy=980`), avoiding its
+implicit conversion of foreign-currency invoices. An existing pending payment
+keeps its original quote. Amount, currency, bank invoice ID and references are
+checked before fulfillment. A redirect alone never pays an invoice.
+
+Card details are entered only on Monobank's hosted page. Use synthetic test
+card `4242424242424242`, future expiry and dummy CVV; the sandbox does not
+transfer real money. Its fake 3-D Secure page lets you confirm or decline.
+Selecting **Save card for automatic renewal** stores an encrypted test card
+token and enables renewal for the assigned rental. Customers can turn renewal
+off and remove saved cards. Tokens never appear in API responses or logs.
+
+Set `PUBLIC_URL=http://127.0.0.1:8000` for the normal local app. For signed
+callbacks use `PUBLIC_URL=https://your-public-host`, routed to the same app.
+The legacy name `MONOBANK_PUBLIC_URL` is supported. The webhook is
+`POST /api/payments/monobank/webhook`. Localhost uses authenticated bank status
+checks on the return page plus background reconciliation. Public deployment
+requires HTTPS and `COOKIE_SECURE=true`.
+
+Automatic renewal reserves a durable attempt before contacting the bank.
+Ambiguous charges are blocked for review, rather than retried as new charges.
+Late or duplicate-invoice payments queue a refund. A processing refund stays
+**Refund pending** until bank confirmation. See [payment reliability](docs/payment-reliability.md).
+
+To run the isolated real-sandbox review:
+
+```powershell
+.venv/Scripts/python.exe -m scripts.beta_review prepare --sandbox --port 8002
+.venv/Scripts/python.exe -m scripts.beta_review serve --sandbox --port 8002
+```
+
+Open http://127.0.0.1:8002 and use the four review accounts with password
+`Review-password-2026!`. This helper verifies the sandbox merchant and uses
+`vpsrent_monobank_sandbox_test`, separate from the application database.
+Never expose these documented review credentials publicly.
+
 After the initial setup, Windows can also launch the application in a hidden
 background process using `./scripts/serve.ps1 -Background`. Stop that process
 with `./scripts/stop.ps1`; the stop script verifies the executable and command
 before stopping it. These scripts do not install dependencies or reset data.
 
-The verified sandbox converts EUR payments to UAH. New checkout and automatic
-renewal freeze an explicit UAH quote from the public EUR/UAH sell rate.
-The saved quote, not the EUR invoice amount, is validated at settlement.
-See `docs/payment-reliability.md` for failure and refund states.
+## Verify
+
+Run these commands from the repository root with PostgreSQL available:
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m ruff check app tests scripts
+.venv/Scripts/python.exe -m alembic check
+.venv/Scripts/python.exe -m scripts.check_schema
+```
+
+Tests use a separate `vpsrent_test` database, or `TEST_DATABASE_URL` if supplied.
+They refuse the application database and require a database name ending in
+`_test`. Test tables are cleared between cases. The Windows database helper
+creates the default test database alongside the application database.
+
+For an isolated browser review, use `scripts/beta_review.py` as described in
+[the review guide](docs/beta-review.md). It preserves the normal application
+database and binds only to localhost. Use `--sandbox` for real test API calls;
+without that flag bank payments are disabled.
+
+The schema audit compares the model with all migrations, documented SQL, the
+live database and the full ER diagram. It writes its non-sensitive report to
+`outputs/beta-schema-audit.json` without changing the database.

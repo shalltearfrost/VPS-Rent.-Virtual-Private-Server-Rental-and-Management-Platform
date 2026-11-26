@@ -27,15 +27,9 @@ there are no build tools or external frontend services required at runtime.
    The backend copies resource and price values into an order and creates its
    invoice. The customer cannot send their own price or customer ID.
 3. `POST /api/invoices/{id}/payments` checks invoice ownership and locks the
-   order/invoice and creates a Monobank acquiring invoice for the same euro
-   amount (`ccy` 978, no conversion). The browser is redirected to its `pageUrl`;
-   afterwards Monobank returns the customer to `#invoice/{id}`. The payment
-   status comes only from Monobank: a signed webhook (ECDSA, `X-Sign`) when
-   `PUBLIC_URL` is https, plus polling of `invoice/status` by the background
-   worker and the invoice page. Success marks the invoice paid and the order
-   awaiting_allocation atomically. All Monobank HTTP calls live in
-   `app/billing/monobank.py`; payment state transitions live in
-   `app/billing/service.py` and the endpoints in `app/billing/routes.py`.
+   order/invoice. It saves a UAH charge quote and opens a Monobank test payment
+   page. Authenticated bank status or a signed callback fulfills the invoice
+   atomically; success queues allocation. Each attempt has an idempotency key.
 4. `GET /api/operator/queue` requires an operator. Allocation locks order then
    server, validates exact resource matching and availability, and inserts a
    rental. A partial unique index prevents more than one held rental per server.
@@ -49,13 +43,42 @@ from PostgreSQL after lock acquisition to avoid stale ORM data during concurrent
 requests. Business conflicts return HTTP 409, ownership misses return 404,
 unauthenticated access returns 401 and forbidden staff actions return 403.
 
+## Monobank test checkout
+
+`app/billing/` contains the gateway, validated schemas, routes, response views
+and payment state services. Hosted payments use
+`POST /api/invoices/{id}/payments`; manual renewal first creates/reuses an
+invoice through `POST /api/rentals/{id}/renewal-invoice`.
+
+The gateway verifies the sandbox merchant, quotes EUR prices in UAH using the
+public sell rate and saves exact minor units before requesting checkout.
+Authenticated status responses and ECDSA-signed notifications must match the
+saved provider invoice, reference, amount and currency. Success fulfills the
+invoice once under order -> rental -> invoice -> payment locks.
+
+A three-second invoice-page poll and background worker reconcile missed local
+callbacks. Public HTTPS allows bank webhooks; localhost cannot receive them.
+Older/repeated notifications cannot repeat fulfillment. An on-time renewal
+adds exactly 30 days; an invalid late payment queues a durable refund.
+Processing refunds stay pending until bank confirmation.
+
+Saved-card tokens use Fernet encryption, customer ownership and a separate
+consent control. The worker reserves a durable automatic attempt, commits an
+uncertain marker before sending and never resends an ambiguous charge.
+Unknown attempts block another payment and allocation until reconciled.
+See [payment reliability](payment-reliability.md) for failure handling.
+
+The old `monobank_checkouts` table remains a historical ledger. The merge
+migration copies its bank bindings and quotes into canonical payments without
+deleting old rows or repeating fulfillment. New checkout uses `payments`.
+
 ## Roles
 
 | Resource/action | Customer | Operator | Support | Manager |
 | --- | --- | --- | --- | --- |
 | Public active catalogue | Read | Read | Read | Read |
-| Orders/invoices/payments/saved cards | Own | Allocation queue only | No | No |
-| Rental access/password/renewal/auto-renewal | Own | Operational inventory only | Ticket context without password | No |
+| Orders/invoices/test payment | Own | Allocation queue only | No | No |
+| Rental access/password/renewal | Own | Operational inventory only | Ticket context without password | No |
 | Allocation, operation resolution, suspension/preparation | No | Yes | No | No |
 | Request server operations | Own active rental | No | No | No |
 | Support conversations | Own | No | Yes | No |
@@ -64,6 +87,13 @@ unauthenticated access returns 401 and forbidden staff actions return 403.
 | Activity | No | Operational actions | Ticket actions | No |
 
 User roles come from the database, never a request field or frontend menu.
+Operation resolution re-reads the locked request with `populate_existing=True`.
+The request may already be present in SQLAlchemy's identity map before waiting
+for another operator's transaction. Refreshing it after acquiring the lock
+ensures the second resolver sees the committed status and receives HTTP 409.
+The concurrency regression synchronizes both HTTP requests before their locks
+and verifies one resolution, one audit record and a consistent power state.
+
 Passwords used for sign-in are Argon2 hashes; VPS passwords use authenticated
 Fernet encryption with an environment key. HttpOnly session tokens are hashed
 before storage, expire after 24 hours, and are removed on logout. A separate

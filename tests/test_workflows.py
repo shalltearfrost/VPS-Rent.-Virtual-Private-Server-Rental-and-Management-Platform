@@ -1,12 +1,22 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from app import services
 from app.main import app
-from app.models import Activity, Order, Payment, Rental, Server
+from app.models import (
+    Activity,
+    OperationRequest,
+    Order,
+    Payment,
+    Rental,
+    Server,
+)
 from app.security import now
 from tests.conftest import PASSWORD, pay
 
@@ -397,3 +407,236 @@ def test_payment_key_is_bound_to_one_invoice(clients, active_rental):
         json={"idempotency_key": "initial-payment-key"},
     )
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "statuses", [("completed", "completed"), ("completed", "rejected")]
+)
+def test_concurrent_operation_resolution_is_recorded_once(
+    clients, active_rental, db, monkeypatch, statuses
+):
+    customer, operator = clients["customer"], clients["operator"]
+    rental_id = active_rental["id"]
+    operation = customer.post(
+        f"/api/rentals/{rental_id}/operations", json={"kind": "stop"}
+    ).json()
+    operation_id = operation["id"]
+    barrier = Barrier(2)
+    original_owned_rental = services.owned_rental
+
+    def synchronize_before_lock(*args, **kwargs):
+        barrier.wait(timeout=10)
+        return original_owned_rental(*args, **kwargs)
+
+    monkeypatch.setattr(services, "owned_rental", synchronize_before_lock)
+
+    def resolve(status):
+        return operator.post(
+            f"/api/operator/operations/{operation_id}/resolve",
+            json={"status": status, "result": f"Operator chose {status}"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(resolve, statuses))
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    successful = next(
+        response.json()
+        for response in responses
+        if response.status_code == 200
+    )
+    db.expire_all()
+    stored = db.get(OperationRequest, operation_id)
+    assert stored.status == successful["status"]
+    assert stored.result == successful["result"]
+    expected_power = "stopped" if stored.status == "completed" else "running"
+    assert db.get(Rental, rental_id).power == expected_power
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(Activity)
+            .where(
+                Activity.entity_type == "operation",
+                Activity.entity_id == operation_id,
+                Activity.action == "operation_resolved",
+            )
+        )
+        == 1
+    )
+
+
+def test_operator_completes_stop_start_and_restart(clients, active_rental):
+    customer, operator = clients["customer"], clients["operator"]
+    path = f"/api/rentals/{active_rental['id']}"
+    for kind, expected_power in (
+        ("stop", "stopped"),
+        ("start", "running"),
+        ("restart", "running"),
+    ):
+        request = customer.post(f"{path}/operations", json={"kind": kind})
+        assert request.status_code == 201
+        response = operator.post(
+            f"/api/operator/operations/{request.json()['id']}/resolve",
+            json={"status": "completed", "result": f"{kind} performed"},
+        )
+        assert response.status_code == 200
+        assert customer.get(path).json()["power"] == expected_power
+
+
+def test_role_read_matrix_and_anonymous_access(clients):
+    permissions = {
+        "/api/orders": {"customer"},
+        "/api/rentals": {"customer"},
+        "/api/operator/queue": {"operator"},
+        "/api/operator/servers": {"operator"},
+        "/api/operator/operations": {"operator"},
+        "/api/management/plans": {"manager"},
+        "/api/tickets": {"customer", "support"},
+        "/api/activity": {"operator", "support"},
+    }
+    with TestClient(app) as anonymous:
+        for path, allowed_roles in permissions.items():
+            assert anonymous.get(path).status_code == 401
+            for role, client in clients.items():
+                expected = 200 if role in allowed_roles else 403
+                assert client.get(path).status_code == expected
+
+
+def test_role_write_matrix(clients, inventory, active_rental):
+    customer = clients["customer"]
+    rental_id = active_rental["id"]
+    order = customer.get(f"/api/orders/{active_rental['order_id']}").json()
+    invoice_id = order["invoices"][0]["id"]
+    ticket = customer.post(
+        "/api/tickets",
+        json={"subject": "Role matrix", "body": "Review permissions"},
+    ).json()
+    operation = customer.post(
+        f"/api/rentals/{rental_id}/operations", json={"kind": "stop"}
+    ).json()
+    plan = {
+        "name": "Role matrix plan",
+        "description": "API permission coverage",
+        "cpu": 1,
+        "ram_gb": 2,
+        "disk_gb": 25,
+        "monthly_cents": 199,
+        "annual_cents": 1990,
+        "enabled": True,
+    }
+    checks = [
+        ("/api/management/plans", plan, {"manager": 201}),
+        (
+            "/api/operator/servers",
+            {
+                "name": "Role-matrix-server",
+                "address": "192.0.2.99",
+                "ssh_user": "ubuntu",
+                "password": PASSWORD,
+                "cpu": 1,
+                "ram_gb": 2,
+                "disk_gb": 25,
+            },
+            {"operator": 201},
+        ),
+        (
+            "/api/orders",
+            {"plan_id": inventory[0].id, "term": "monthly"},
+            {"customer": 201},
+        ),
+        (
+            f"/api/rentals/{rental_id}/renewal-invoice",
+            None,
+            {"customer": 200},
+        ),
+        (
+            f"/api/rentals/{rental_id}/operations",
+            {"kind": "stop"},
+            {"customer": 409},
+        ),
+        (
+            f"/api/operator/operations/{operation['id']}/resolve",
+            {"status": "completed", "result": "Reviewed by operator"},
+            {"operator": 200},
+        ),
+        (
+            f"/api/invoices/{invoice_id}/payments",
+            {
+                "idempotency_key": "role-matrix-payment-key",
+            },
+            {"customer": 201},
+        ),
+        (
+            f"/api/rentals/{rental_id}/reveal-password",
+            None,
+            {"customer": 200},
+        ),
+        (
+            f"/api/tickets/{ticket['id']}/messages",
+            {"body": "Role matrix reply"},
+            {"customer": 201, "support": 201},
+        ),
+        (
+            f"/api/tickets/{ticket['id']}/status",
+            {"status": "closed"},
+            {"support": 200},
+        ),
+        (
+            f"/api/operator/rentals/{rental_id}/suspend",
+            None,
+            {"operator": 409},
+        ),
+        (
+            f"/api/operator/rentals/{rental_id}/prepare",
+            {"password": "New-review-password-2026!"},
+            {"operator": 409},
+        ),
+        ("/api/operator/expiry-scan", None, {"operator": 200}),
+    ]
+    with TestClient(app) as anonymous:
+        for path, payload, permissions in checks:
+            assert anonymous.post(path, json=payload).status_code == 401
+            for role, client in clients.items():
+                response = client.post(path, json=payload)
+                assert response.status_code == permissions.get(role, 403), (
+                    role,
+                    path,
+                    response.text,
+                )
+
+
+def test_another_customer_cannot_mutate_rental_or_invoice(
+    clients, active_rental
+):
+    customer = clients["customer"]
+    order = customer.get(f"/api/orders/{active_rental['order_id']}").json()
+    rental_id = active_rental["id"]
+    invoice_id = order["invoices"][0]["id"]
+    with TestClient(app) as other:
+        account = other.post(
+            "/api/auth/register",
+            json={"email": "isolated@example.com", "password": PASSWORD},
+        ).json()
+        other.headers["X-CSRF-Token"] = account["csrf_token"]
+        attempts = [
+            (f"/api/rentals/{rental_id}/renewal-invoice", None),
+            (
+                f"/api/rentals/{rental_id}/operations",
+                {"kind": "stop"},
+            ),
+            (
+                f"/api/invoices/{invoice_id}/payments",
+                {
+                    "idempotency_key": "foreign-customer-payment-key",
+                },
+            ),
+            (
+                "/api/tickets",
+                {
+                    "subject": "Foreign rental",
+                    "body": "Must not be attached",
+                    "rental_id": rental_id,
+                },
+            ),
+        ]
+        for path, payload in attempts:
+            assert other.post(path, json=payload).status_code == 404

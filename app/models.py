@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -8,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     func,
@@ -380,3 +382,44 @@ class Activity(Record, Timestamped, Base):
     entity_type: Mapped[str] = mapped_column(String(32))
     entity_id: Mapped[int] = mapped_column(BigInteger)
     result: Mapped[str] = mapped_column(Text)
+
+
+class MonobankCheckout(Record, Timestamped, Base):
+    __tablename__ = "monobank_checkouts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('created', 'processing', 'hold', 'success', "
+            "'failure', 'expired', 'reversed')",
+            name="monobank_checkout_status",
+        ),
+        CheckConstraint(
+            "(amount_kopecks IS NULL AND eur_uah_rate IS NULL) OR "
+            "(amount_kopecks IS NOT NULL AND amount_kopecks > 0 "
+            "AND eur_uah_rate IS NOT NULL AND eur_uah_rate > 0)",
+            name="monobank_checkout_quote",
+        ),
+        Index(
+            "uq_monobank_pending_invoice",
+            "invoice_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('created', 'processing', 'hold')"
+            ),
+        ),
+    )
+
+    invoice_id: Mapped[int] = reference("invoices")
+    payment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payments.id", ondelete="RESTRICT"), unique=True
+    )
+    reference: Mapped[str] = mapped_column(String(64), unique=True)
+    provider_invoice_id: Mapped[str] = mapped_column(String(64), unique=True)
+    payment_url: Mapped[str] = mapped_column(Text)
+    amount_kopecks: Mapped[int | None] = mapped_column(BigInteger)
+    eur_uah_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    status: Mapped[str] = mapped_column(String(16), default="created")
+    modified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False)

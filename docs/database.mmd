@@ -1,0 +1,178 @@
+erDiagram
+    PLANS {
+        varchar(40) name UK
+        varchar(160) description
+        integer cpu
+        integer ram_gb
+        integer disk_gb
+        integer monthly_cents
+        integer annual_cents
+        boolean enabled
+        bigint id PK
+        timestamptz created_at
+    }
+    SERVERS {
+        varchar(40) name UK
+        inet address UK
+        integer cpu
+        integer ram_gb
+        integer disk_gb
+        varchar(32) ssh_user
+        text password_ciphertext
+        varchar(16) state
+        bigint id PK
+        timestamptz created_at
+    }
+    USERS {
+        varchar(254) email UK
+        text password_hash
+        varchar(16) role
+        bigint id PK
+        timestamptz created_at
+    }
+    ACTIVITY {
+        bigint actor_id FK "NULL"
+        varchar(64) action
+        varchar(32) entity_type
+        bigint entity_id
+        text result
+        bigint id PK
+        timestamptz created_at
+    }
+    ORDERS {
+        bigint customer_id FK
+        bigint plan_id FK
+        varchar(40) plan_name
+        integer cpu
+        integer ram_gb
+        integer disk_gb
+        integer price_cents
+        integer renewal_cents
+        varchar(16) term
+        varchar(24) status
+        bigint id PK
+        timestamptz created_at
+    }
+    PAYMENT_CARDS {
+        bigint customer_id FK
+        text token_ciphertext
+        varchar(64) token_hash
+        varchar(32) masked_pan
+        timestamptz removed_at "NULL"
+        bigint id PK
+        timestamptz created_at
+    }
+    SESSIONS {
+        bigint user_id FK
+        varchar(64) token_hash UK
+        varchar(64) csrf_token
+        timestamptz expires_at
+        bigint id PK
+    }
+    RENTALS {
+        bigint order_id FK,UK
+        bigint server_id FK
+        timestamptz started_at
+        timestamptz expires_at
+        varchar(24) status
+        varchar(16) power
+        bigint auto_renew_card_id FK "NULL"
+        bigint id PK
+    }
+    INVOICES {
+        bigint order_id FK
+        bigint rental_id FK "NULL"
+        varchar(16) kind
+        integer amount_cents
+        varchar(3) currency
+        varchar(16) status
+        timestamptz paid_at "NULL"
+        bigint id PK
+        timestamptz created_at
+    }
+    OPERATION_REQUESTS {
+        bigint rental_id FK
+        bigint requested_by FK
+        varchar(16) kind
+        varchar(16) status
+        text result "NULL"
+        bigint resolved_by FK "NULL"
+        timestamptz resolved_at "NULL"
+        bigint id PK
+        timestamptz created_at
+    }
+    TICKETS {
+        bigint customer_id FK
+        bigint rental_id FK "NULL"
+        varchar(160) subject
+        varchar(16) status
+        bigint id PK
+        timestamptz created_at
+    }
+    PAYMENTS {
+        bigint invoice_id FK
+        bigint customer_id FK
+        varchar(64) idempotency_key UK
+        varchar(16) status
+        varchar(16) provider
+        varchar(16) initiated_by
+        varchar(64) provider_invoice_id UK "NULL"
+        text page_url "NULL"
+        boolean save_card
+        bigint card_id FK "NULL"
+        text failure_reason "NULL"
+        varchar(64) reference UK "NULL"
+        bigint charge_amount "NULL"
+        varchar(3) charge_currency "NULL"
+        boolean review_required
+        varchar(64) refund_reference UK "NULL"
+        timestamptz refund_started_at "NULL"
+        timestamptz provider_modified_at "NULL"
+        timestamptz updated_at
+        bigint id PK
+        timestamptz created_at
+    }
+    TICKET_MESSAGES {
+        bigint ticket_id FK
+        bigint author_id FK
+        text body
+        bigint id PK
+        timestamptz created_at
+    }
+    MONOBANK_CHECKOUTS {
+        bigint invoice_id FK
+        bigint payment_id FK,UK "NULL"
+        varchar(64) reference UK
+        varchar(64) provider_invoice_id UK
+        text payment_url
+        bigint amount_kopecks "NULL"
+        numeric(12,6) eur_uah_rate "NULL"
+        varchar(16) status
+        timestamptz modified_at "NULL"
+        timestamptz expires_at
+        boolean review_required
+        bigint id PK
+        timestamptz created_at
+    }
+    USERS |o..o{ ACTIVITY : actor_id
+    USERS ||..o{ ORDERS : customer_id
+    PLANS ||..o{ ORDERS : plan_id
+    USERS ||..o{ PAYMENT_CARDS : customer_id
+    USERS ||..o{ SESSIONS : user_id
+    ORDERS ||..o| RENTALS : order_id
+    SERVERS ||..o{ RENTALS : server_id
+    PAYMENT_CARDS |o..o{ RENTALS : auto_renew_card_id
+    ORDERS ||..|{ INVOICES : order_id
+    RENTALS |o..o{ INVOICES : rental_id
+    RENTALS ||..o{ OPERATION_REQUESTS : rental_id
+    USERS ||..o{ OPERATION_REQUESTS : requested_by
+    USERS |o..o{ OPERATION_REQUESTS : resolved_by
+    USERS ||..o{ TICKETS : customer_id
+    RENTALS |o..o{ TICKETS : rental_id
+    INVOICES ||..o{ PAYMENTS : invoice_id
+    USERS ||..o{ PAYMENTS : customer_id
+    PAYMENT_CARDS |o..o{ PAYMENTS : card_id
+    TICKETS ||..|{ TICKET_MESSAGES : ticket_id
+    USERS ||..o{ TICKET_MESSAGES : author_id
+    INVOICES ||..o{ MONOBANK_CHECKOUTS : invoice_id
+    PAYMENTS |o..o| MONOBANK_CHECKOUTS : payment_id

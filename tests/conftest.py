@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import make_url, text
 from sqlalchemy.orm import Session
 
-from app.billing.monobank import optional_gateway
+from app.billing.monobank import configured_gateway, optional_gateway
 from app.config import get_settings
 from app.database import Base, get_engine
 from app.main import app
@@ -50,6 +50,13 @@ def pay(
 @pytest.fixture(scope="session", autouse=True)
 def test_database():
     load_dotenv()
+    original_tokens = {
+        key: os.environ.get(key)
+        for key in ("MONOBANK_TOKEN", "MONOBANK_TEST_TOKEN")
+    }
+    os.environ["MONOBANK_TOKEN"] = ""
+    os.environ["MONOBANK_TEST_TOKEN"] = ""
+    configured_gateway.cache_clear()
     original_url = os.environ["DATABASE_URL"]
     url = make_url(
         os.environ.get(
@@ -73,6 +80,12 @@ def test_database():
     get_engine.cache_clear()
     get_settings.cache_clear()
     os.environ["DATABASE_URL"] = original_url
+    for key, value in original_tokens.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    configured_gateway.cache_clear()
 
 
 @pytest.fixture(autouse=True)

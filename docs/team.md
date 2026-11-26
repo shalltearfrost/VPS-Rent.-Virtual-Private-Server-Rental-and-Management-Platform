@@ -1,18 +1,24 @@
-# Team and Alpha scope
+Andrii Moroz Â· Artem Ankudinov Â· Illia Yerokhin
 
-Andrii Moroz · Artem Ankudinov · Illia Yerokhin
+# Team and Beta scope
 
 ## Updated responsibilities
 
-| Member | Responsible area | Implemented in the shared Alpha |
+| Member | Responsible area | Current shared Beta implementation |
 | --- | --- | --- |
-| Andrii Moroz | Allocation, inventory, operations, suspension/preparation | Matching resources, transactional assignment, pool entry, pending operation workflow, power state, expiry scan, suspension and credential rotation before reuse; customer control-panel UI |
-| Artem Ankudinov | Accounts, authorization, plans, orders | Registration/login/logout, session cookies/CSRF, server-side role/ownership checks, manager plan CRUD/disable, immutable order snapshots, catalogue, term selection and order UI |
-| Illia Yerokhin | Payments, renewals, support, activity | Monobank acquiring payments in euro (signed webhooks, status polling, refunds), idempotency, exactly-once 30-day renewal, saved cards and automatic renewal, ticket/message/status workflows, audit records and their UI |
+| Andrii Moroz | Allocation, inventory, operations, suspension/preparation | Matching resources, transactional assignment, pool entry, operation completion/rejection, power state, expiry scan, suspension and credential rotation before reuse; refreshed locked operation state prevents duplicate concurrent resolution; operation lifecycle and race regression coverage |
+| Artem Ankudinov | Accounts, authorization, plans, orders | Registration/login/logout, session cookies/CSRF, backend role/ownership checks, manager plan create/update/disable, immutable order snapshots, catalogue, monthly/annual selection and order UI; role access matrix and registration/session regression coverage |
+| Illia Yerokhin | Test payments, renewals, support, activity | Invoice/payment records and idempotency, exactly-once 30-day renewal, Monobank sandbox checkout with stored exchange quotes and verified events, ticket/message/status workflows, role-filtered history; payment, renewal, support and webhook regression coverage |
 
 Each member is responsible for reviewing their area, running the scenario and
 explaining the complete request flow at the review. Database design and
 integration checks are shared.
+
+These are the team's ownership areas and the implementation available in the
+shared repository. Each member must review and confirm their contribution
+statement before submission; the table is not a claim about commit authorship.
+The Beta requirements matrix, review procedure and verification record are
+shared deliverables in `beta.md` and `beta-review.md`.
 
 ## Changes from Stage 1
 
@@ -24,22 +30,23 @@ integration checks are shared.
 2. The approved connection method is SSH with a username/password. No SSH-key
    setup flow is implemented. Show reveals the encrypted server password only
    to its active rental owner.
-3. The Alpha demonstrates manual infrastructure work. Inventory initially uses
+3. The Beta retains manual infrastructure work. Inventory initially uses
    documentation IPs so the full database workflow can run without purchasing
    or operating external VPS instances. Replace them through operator inventory
    entry for a real hosting demonstration.
 
-Payments go through Monobank acquiring; with a Monobank test token no real
-money moves. Registration cannot grant staff roles. The operational
+All payments remain tests. Registration cannot grant staff roles. The operational
 and support permissions remain separate. No supplier purchase, proxy service,
-custom-domain billing or claim about server location is
-included. Prices reproduce the approved mockup and are demo configuration.
+custom-domain billing, real payment gateway or claim about server location is
+included. Test checkout now supports Monobank's sandbox, hosted card entry and
+verified status notifications, optional saved-card automatic renewal and confirmed test refunds. These additions exercise payment reliability while keeping Stage 1 test-only payments. Prices reproduce the approved mockup and are
+demo configuration.
 
 ## Open risks / next work
 
 - Real infrastructure: validate provider resale terms, availability and the
   manual assignment/preparation checklist before onboarding real customers.
-  The Alpha cannot verify that a physical provider action actually happened.
+  The application cannot verify that a physical provider action happened.
 - Production: require HTTPS and `COOKIE_SECURE=true`, deployment secret storage,
   encrypted backups, key-recovery procedures, and login throttling before
   exposing this local prototype publicly. Password reset/email verification
@@ -54,3 +61,12 @@ included. Prices reproduce the approved mockup and are demo configuration.
 - PostgreSQL enforces uniqueness and financial/state checks. Administrative
   database access remains trusted; database-level immutable audit roles and
   protection against direct SQL edits are future deployment work.
+
+## Payment integration provenance
+
+Illia Yerokhin authored the payment-processing PR (original commit `8b14049`).
+Integration review corrected ambiguous automatic charges, asynchronous refunds
+and settlement validation, then added explicit UAH quoting after a real sandbox
+check exposed Monobank conversion. These fixes and regressions were applied to
+the PR branch and integrated with the existing Beta role and operation tests.
+This is a shared assisted integration; each member must review the final code.

@@ -367,5 +367,56 @@ CREATE UNIQUE INDEX uq_pending_payment ON payments (invoice_id) WHERE status IN 
 
 UPDATE alembic_version SET version_num='9a82d7d0d151' WHERE alembic_version.version_num = '7c1d2a9f4b10';
 
+-- Running upgrade e266e9761931 -> 770df647333b
+
+CREATE TABLE monobank_checkouts (
+    invoice_id BIGINT NOT NULL, 
+    payment_id BIGINT, 
+    reference VARCHAR(64) NOT NULL, 
+    provider_invoice_id VARCHAR(64) NOT NULL, 
+    payment_url TEXT NOT NULL, 
+    status VARCHAR(16) NOT NULL, 
+    modified_at TIMESTAMP WITH TIME ZONE, 
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+    review_required BOOLEAN NOT NULL, 
+    id BIGSERIAL NOT NULL, 
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+    PRIMARY KEY (id), 
+    CONSTRAINT monobank_checkout_status CHECK (status IN ('created', 'processing', 'hold', 'success', 'failure', 'expired', 'reversed')), 
+    FOREIGN KEY(invoice_id) REFERENCES invoices (id) ON DELETE RESTRICT, 
+    FOREIGN KEY(payment_id) REFERENCES payments (id) ON DELETE RESTRICT, 
+    UNIQUE (payment_id), 
+    UNIQUE (provider_invoice_id), 
+    UNIQUE (reference)
+);
+
+CREATE INDEX ix_monobank_checkouts_invoice_id ON monobank_checkouts (invoice_id);
+
+CREATE UNIQUE INDEX uq_monobank_pending_invoice ON monobank_checkouts (invoice_id) WHERE status IN ('created', 'processing', 'hold');
+
+INSERT INTO alembic_version (version_num) VALUES ('770df647333b') RETURNING alembic_version.version_num;
+
+-- Running upgrade 770df647333b -> 19364610a068
+
+ALTER TABLE monobank_checkouts ADD COLUMN amount_kopecks BIGINT;
+
+ALTER TABLE monobank_checkouts ADD COLUMN eur_uah_rate NUMERIC(12, 6);
+
+ALTER TABLE monobank_checkouts ADD CONSTRAINT monobank_checkout_quote CHECK ((amount_kopecks IS NULL AND eur_uah_rate IS NULL) OR (amount_kopecks IS NOT NULL AND amount_kopecks > 0 AND eur_uah_rate IS NOT NULL AND eur_uah_rate > 0));
+
+UPDATE alembic_version SET version_num='19364610a068' WHERE alembic_version.version_num = '770df647333b';
+
+-- Running upgrade 19364610a068, 9a82d7d0d151 -> b8109fd1b2aa
+
+UPDATE payments AS p SET provider = 'monobank', provider_invoice_id = c.provider_invoice_id, reference = c.reference, page_url = c.payment_url, charge_amount = c.amount_kopecks, charge_currency = CASE WHEN c.amount_kopecks IS NOT NULL THEN 'UAH' ELSE NULL END, review_required = c.review_required OR c.amount_kopecks IS NULL, provider_modified_at = c.modified_at FROM monobank_checkouts AS c WHERE c.payment_id = p.id;
+
+INSERT INTO payments (invoice_id, customer_id, idempotency_key, status, provider, initiated_by, provider_invoice_id, page_url, save_card, reference, charge_amount, charge_currency, review_required, created_at, updated_at) SELECT c.invoice_id, o.customer_id, 'legacy-checkout-' || c.id, CASE WHEN c.status = 'success' OR c.amount_kopecks IS NULL THEN 'uncertain' ELSE 'pending' END, 'monobank', 'customer', c.provider_invoice_id, c.payment_url, false, c.reference, c.amount_kopecks, CASE WHEN c.amount_kopecks IS NOT NULL THEN 'UAH' ELSE NULL END, c.review_required OR c.amount_kopecks IS NULL OR c.status = 'success', c.created_at, now() FROM monobank_checkouts AS c JOIN invoices AS i ON i.id = c.invoice_id JOIN orders AS o ON o.id = i.order_id WHERE c.payment_id IS NULL AND c.status IN ('created', 'processing', 'hold', 'success') AND NOT EXISTS (SELECT 1 FROM payments AS p WHERE p.provider_invoice_id = c.provider_invoice_id);
+
+UPDATE monobank_checkouts AS c SET payment_id = p.id FROM payments AS p WHERE c.payment_id IS NULL AND p.provider_invoice_id = c.provider_invoice_id;
+
+DELETE FROM alembic_version WHERE alembic_version.version_num = '19364610a068';
+
+UPDATE alembic_version SET version_num='b8109fd1b2aa' WHERE alembic_version.version_num = '9a82d7d0d151';
+
 COMMIT;
 

@@ -1,7 +1,7 @@
 [project]
 name = "vps-rent"
-version = "0.1.0"
-description = "VPS rental and management Alpha"
+version = "0.3.0"
+description = "VPS rental and management Beta"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -14,7 +14,6 @@ dependencies = [
     "pwdlib[argon2]>=0.2,<1",
     "cryptography>=44,<51",
     "httpx>=0.28,<1",
-    "python-dotenv>=1,<2",
 ]
 
 [project.optional-dependencies]

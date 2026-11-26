@@ -208,6 +208,7 @@ def resolve_operation(
         select(OperationRequest)
         .where(OperationRequest.id == operation_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if operation.status != "pending":
         raise HTTPException(409, "This request has already been resolved")
